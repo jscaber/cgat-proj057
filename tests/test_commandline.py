@@ -1,0 +1,248 @@
+'''test_commandline - test coding style confirmation of CGAT code
+===========================================================
+
+:Author: Andreas Heger
+:Release: $Id$
+:Date: |today|
+:Tags: Python
+
+Purpose
+-------
+
+This script test the command line usage of all scripts in the
+CGAT code collection.
+
+This script is best run within nosetests::
+
+   nosetests tests/test_commandline.py --nocapture
+
+
+.. note::
+
+   Make sure to run::
+
+       python setup.py develop
+
+   Before running these tests.
+
+'''
+import glob
+import os
+import importlib
+import yaml
+import re
+import sys
+import copy
+import platform
+
+from nose.tools import ok_
+import CGATCore.Experiment as E
+import CGATCore.IOTools as IOTools
+import TestUtils
+
+# handle to original E.Start function
+ORIGINAL_START = None
+
+# Parser object collected from child script
+PARSER = None
+
+# DIRECTORIES to examine for python modules/scripts
+EXPRESSIONS = (
+    ('tools', 'CGAT/tools/*.py'),)
+
+EXCLUDE = [
+    "__init__.py",
+    "version.py",
+    "cgat.py",
+    "gtf2table.py",  # fails with pysam include issue
+    "bed2table.py",  # fails with pysam include issue
+    "fasta2bed.py",   # fails because of pybedtools rebuild
+]
+
+# Filename with the black/white list of options.
+# The file is a tab-separated with the first column
+# an option name and the second field a marker.
+# Possible markers are:
+# ok = whitelist - this option is ok.
+# 'bad', 'rename', '?', '' - this option is not ok.
+FILENAME_OPTIONLIST = "tests/option_list.tsv"
+
+
+class DummyError(Exception):
+    pass
+
+
+def filter_files(files):
+    '''filter list of files according to filters set in
+    configuration file tests/_test_commandline.yml'''
+
+    # directory location of tests
+    testing_dir = TestUtils.get_tests_directory()
+
+    # the config file
+    config_file = os.path.join(testing_dir, "_test_commandline.yml")
+
+    if os.path.exists(config_file):
+        config = yaml.load(open(config_file))
+        if config is not None:
+            if "restrict" in config and config["restrict"]:
+                values = config["restrict"]
+                if "manifest" in values:
+                    # take scripts defined in the MANIFEST.in file
+                    scriptdirs = [x for x in open("MANIFEST.in")
+                                  if x.startswith("include CGAT/tools") and
+                                  x.endswith(".py\n")]
+
+                    take = set([re.sub("include\s*", "",
+                                       x[:-1]) for x in scriptdirs])
+                    files = [x for x in files if x in take]
+
+                if "regex" in values:
+                    rx = re.compile(values["regex"])
+                    files = filter(rx.search, files)
+    return files
+
+
+def LocalStart(parser, *args, **kwargs):
+    '''stub for E.start - set return_parser argument to true'''
+    global PARSER
+    d = copy.copy(kwargs)
+    d.update({'return_parser': True})
+    PARSER = ORIGINAL_START(parser, **d)
+    raise DummyError()
+
+
+def load_script(script_name):
+
+    # call other script
+    prefix, suffix = os.path.splitext(script_name)
+
+    dirname = os.path.relpath(os.path.dirname(script_name))
+    basename = os.path.basename(script_name)[:-3]
+
+    if os.path.exists(prefix + ".pyc"):
+        try:
+            os.remove(prefix + ".pyc")
+        except OSError:
+            pass
+
+    modulename = ".".join((re.sub("/", ".", dirname), basename))
+    try:
+        module = importlib.import_module(modulename)
+    except ImportError as msg:
+        sys.stderr.write('could not import %s - skipped: %s\n' %
+                         (modulename, msg))
+        module = None
+
+    return module, modulename
+
+
+def check_option(option, script_name, map_option2action):
+    '''import script and get command line options.
+
+    Test command line options for conformity.
+    '''
+    if option in map_option2action:
+        ok_(option in map_option2action,
+            'option %s:%s unknown')
+        ok_(map_option2action[option] == "ok",
+            'option %s:%s wrong: action="%s"' %
+            (script_name, option, map_option2action[option]))
+
+
+def fail_(msg):
+    '''create test that fails with *msg*.'''
+    ok_(False, msg)
+
+
+def test_cmdline():
+    '''test style of scripts
+    '''
+
+    # start script in order to build the command line parser
+    global ORIGINAL_START
+    if ORIGINAL_START is None:
+        ORIGINAL_START = E.start
+
+    # read the first two columns
+    map_option2action = IOTools.read_map(
+        IOTools.open_file(FILENAME_OPTIONLIST),
+        columns=(0, 1),
+        has_header=True)
+
+    files = []
+    for label, expression in EXPRESSIONS:
+        f = glob.glob(expression)
+        files.extend(sorted(f))
+
+    files = filter_files(files)
+
+    # make sure to use the current working directory as
+    # primary lookup.
+    sys.path.insert(0, ".")
+
+    # files = [
+    #    'scripts/check_db.py',
+    #    'scripts/cgat_build_report_page.py']
+
+    for f in files:
+        if os.path.isdir(f):
+            continue
+        if os.path.basename(f) in EXCLUDE:
+            continue
+
+        script_name = os.path.abspath(f)
+        pyxfile = (os.path.join(os.path.dirname(f), "_") +
+                   os.path.basename(f) + "x")
+
+        fail_.description = script_name
+        # check if script contains getopt
+        with IOTools.open_file(script_name) as inf:
+            if "getopt" in inf.read():
+                yield (fail_,
+                       "script uses getopt directly: %s" % script_name)
+                continue
+
+        module, modulename = load_script(script_name)
+        if module is None:
+            yield (fail_,
+                   "module could not be imported: %s\n" % script_name)
+            continue
+        E.start = LocalStart
+
+        try:
+            module.main(argv=["dummy", "--help"])
+        except AttributeError:
+            yield (fail_,
+                   "no main method in %s\n" % script_name)
+            ok_(False, "no main method in %s" % script_name)
+        except SystemExit:
+            yield (fail_,
+                   "script does not use E.start() %s\n" % script_name)
+        except DummyError:
+            pass
+
+        for option in PARSER.option_list:
+            # ignore options added by optparse
+            if option.dest is None:
+                continue
+
+            optstring = option.get_opt_string()
+            if optstring.startswith("--"):
+                optstring = optstring[2:]
+
+            check_option.description = script_name + ":" + optstring
+
+            yield(check_option, optstring, os.path.abspath(f),
+                  map_option2action)
+
+        # clear up
+        del sys.modules[modulename]
+
+        # scripts with pyximport need special handling.
+        #
+        # Multiple imports of pyximport seems to create
+        # some confusion - here, clear up sys.meta_path after
+        # each script
+        if os.path.exists(pyxfile):
+            sys.meta_path = []

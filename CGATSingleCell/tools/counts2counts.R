@@ -1,5 +1,7 @@
 #' filtering single cell data based on QC metrics
 #'
+#' WARNING: This script is work-in-progress
+#' 
 #' Example usage:
 #' 
 #' cgat sc-counts2counts --counts-filename=featurecounts.tsv --phenotypes-filename=phenodata.tsv --factor=group,mouse_id,collection_date,slice_depth,slice_number,pipette_visual,timepoint > filtered_counts.tsv
@@ -14,7 +16,7 @@
 #'
 #' Features can then be selected in the `--factor` option to be
 #' plotted.
-#' 
+#'
 #' -> todo: parameterize detection of ERCC (pattern?)
 #' -> todo: parameterize definition of mitochondrial genes - currently hardcoded for mouse.
 
@@ -26,7 +28,7 @@ suppressMessages(library(Cairo))
 suppressMessages(library(scater))
 
 source(file.path(Sys.getenv("R_ROOT"), "experiment.R"))
-
+source(file.path(Sys.getenv("R_ROOT"), "io.R"))
 
 start_plot <- function(section, height = 6, width = 10, type = "png") {
     file = get_output_filename(paste0(section, ".", type))
@@ -136,6 +138,11 @@ plot_qc <- function(data_sceset, section, factors, opt) {
     print(plotQC(data_sceset, type = "highest-expression"))
     end_plot()
 
+    flog.info(paste("plotting expression frequency vs mean"))
+    start_plot(paste("qc_expression_frequency_vs_mean", section, sep = "-"))
+    print(plotQC(data_sceset, type = "exprs-freq-vs-mean"))
+    end_plot()
+    
     flog.info("scatter plot of log10 of total features with +/- mad to show cutoff used (red line) for cells")
     start_plot(paste("qc_total_features_scatter_mad", section, sep = "-"))
     plot(log10(data_sceset$total_features),
@@ -269,55 +276,13 @@ run <- function(opt) {
     options(stringsAsFactors = FALSE)
     set.seed(1234567)
 
-    flog.info(paste("reading counts data from", normalizePath(opt$counts_filename)))
-
-    counts_data <-read.table(opt$counts_filename, header = TRUE, row.names = 1, sep = "\t")
-    flog.info(paste("read counts data", paste(dim(counts_data), collapse = ",")))
-
-    flog.info(paste("reading phenotype data from", normalizePath(opt$phenotypes_filename)))
-    annotation_data <- read.table(opt$phenotypes_filename, sep = "\t", header = TRUE)
-    flog.info(paste("read phenotype data", paste(dim(annotation_data), collapse = ",")))
-    
-    flog.info(paste("read annotation data", paste(dim(annotation_data), collapse = "-")))
-    annotation_data$sample_id <- gsub("-", ".", annotation_data$sample_id)
-    row.names(annotation_data) <- annotation_data$sample_id
-
-    flog.info("building SingleCellExperiment data set")
-    all_sceset <- SingleCellExperiment(assays = list(counts = as.matrix(counts_data)), colData = annotation_data)
-    flog.info(paste("built SingleCellExperiment data set", paste(dim(all_sceset), collapse=",")))
-
-    flog.info("removing genes not expressed in any cell")
-    keep_feature <- rowSums(counts(all_sceset) > 0) > 0
-    flog.info(paste("keeping", sum(keep_feature), "genes"))
-    all_sceset <- all_sceset[keep_feature, ]
-    
-    ercc <- rownames(all_sceset)[grep("ERCC", rownames(all_sceset))]
-    mt <- c("ENSMUSG00000064336","ENSMUSG00000064337","ENSMUSG00000064338",
-            "ENSMUSG00000064339","ENSMUSG00000064340","ENSMUSG00000064341",
-            "ENSMUSG00000064342","ENSMUSG00000064343","ENSMUSG00000064344",
-            "ENSMUSG00000064345","ENSMUSG00000064346","ENSMUSG00000064347",
-            "ENSMUSG00000064348","ENSMUSG00000064349","ENSMUSG00000064350",
-            "ENSMUSG00000064351","ENSMUSG00000064352","ENSMUSG00000064353",
-            "ENSMUSG00000064354","ENSMUSG00000064355","ENSMUSG00000064356",
-            "ENSMUSG00000064357","ENSMUSG00000064358","ENSMUSG00000064359",
-            "ENSMUSG00000064360","ENSMUSG00000064361","ENSMUSG00000064363",
-            "ENSMUSG00000064364","ENSMUSG00000064365","ENSMUSG00000064366",
-            "ENSMUSG00000064367","ENSMUSG00000064368","ENSMUSG00000064369",
-            "ENSMUSG00000064370","ENSMUSG00000064371","ENSMUSG00000064372",
-            "ENSMUSG00000065947")
-
-    is.spike <- (rownames(all_sceset) %in% ercc)
-    isSpike(all_sceset, type="ERCC") <- is.spike
-
-    is.mito <- (rownames(all_sceset) %in% mt)
-    isSpike(all_sceset, type="Mt") <- is.mito
-    
-    flog.info(paste("marking", sum(is.spike), "spike-in genes"))
-    flog.info(paste("marking", sum(is.mito), "mitochondrial genes"))
+    all_sceset <- read_single_cell_experiment_from_tables(opt$counts_filename, opt$phenotypes_filename)
 
     flog.info("calculating SCRAN QC metrics using spike-in and mitochondrial controls")
     all_sceset <- scater::calculateQCMetrics(all_sceset,
-                                              feature_controls = list(ERCC = is.spike, Mt = is.mito))
+                                             feature_controls = list(
+                                             ERCC = isSpike(all_sceset, type="ERCC"),
+                                             Mt = isSpike(all_sceset, type="Mt")))
     all_sceset <- scater::arrange(all_sceset, group)
 
     ## print(colnames(colData(all_sceset)))
@@ -390,6 +355,9 @@ run <- function(opt) {
     ##     detect_outliers = TRUE,
     ##     return_SCE = TRUE
     ##     )
+    file = get_output_filename("sce.rds")
+    flog.info(paste("saving single cell data to", file))
+    saveRDS(filtered_sceset, file = file)
     
     ## Set up gene lengths for RPKM
     flog.info("outputting filtered counts data")
@@ -398,7 +366,7 @@ run <- function(opt) {
                 sep = "\t",
                 quote = FALSE,
                 row.names = TRUE,
-                col.names = TRUE)
+                col.names = NA)
 }
 
 main <- function() {

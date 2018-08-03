@@ -37,7 +37,7 @@ import collections
 import shlex
 import subprocess
 import CGATCore.IOTools as IOTools
-import CGAT
+import CGATSingleCell
 
 
 def mapKeyword2Script(path):
@@ -92,7 +92,7 @@ def main(argv=None):
 
     argv = sys.argv
 
-    path = os.path.join(os.path.abspath(os.path.dirname(CGAT.__file__)),
+    path = os.path.join(os.path.abspath(os.path.dirname(CGATSingleCell.__file__)),
                         "tools")
 
     if len(argv) == 1 or argv[1] == "--help" or argv[1] == "-h":

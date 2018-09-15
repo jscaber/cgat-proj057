@@ -36,7 +36,7 @@ import imp
 import collections
 import shlex
 import subprocess
-import CGATCore.IOTools as IOTools
+import cgatcore.iotools as IOTools
 import CGATSingleCell
 
 

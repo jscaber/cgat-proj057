@@ -192,13 +192,11 @@ plot_qc <- function(data_sceset, section, factors, opt) {
         
         flog.info(paste("plotting percentage counts in mitochondrial genes into"))
         start_plot(paste("qc_percentage_counts_mitochondrial_genes", section, factor, sep = "-"))
-        print(scater::plotPhenoData(
+        print(scater::plotColData(
                           data_sceset,
-                          aes_string(
-                              x = "total_features",
-                              y = "pct_counts_Mt",
-                              colour = factor
-                              )
+                          x = "total_features_by_counts",
+                          y = "pct_counts_Mt",
+                          colour = factor
                       ))
         end_plot()
 
@@ -206,11 +204,9 @@ plot_qc <- function(data_sceset, section, factors, opt) {
         start_plot(paste("qc_percentage_counts_ERCC_genes", section, factor, sep = "-"))
         print(scater::plotPhenoData(
                           data_sceset,
-                          aes_string(
-                          x = "total_features",
+                          x = "total_features_by_counts",
                           y = "pct_counts_ERCC",
                           colour = factor
-                      )
                       ))
         end_plot()
 
@@ -221,7 +217,7 @@ plot_qc <- function(data_sceset, section, factors, opt) {
                       exprs_values = "counts",
                       ncomponents = 2,
                       colour_by = factor,
-                      size_by = "total_features"))
+                      size_by = "total_features_by_counts"))
         end_plot()
 
         flog.info(paste("plotting PCA4"))

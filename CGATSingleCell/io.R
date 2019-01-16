@@ -57,3 +57,19 @@ read_single_cell_experiment_from_tables <- function(counts_filename,
     assay(all_sceset, "logcounts_raw") <- log2(counts(all_sceset) + 1)
     return(all_sceset)
 }
+
+read_single_cell_experiment_from_rds <- function(rds_filename,
+                                                 remove_all_zero = TRUE) {
+   
+    futile.logger::flog.info(paste("reading single cell experiment object from", normalizePath(rds_filename)))
+    sce <- readRDS(rds_filename)
+    futile.logger::flog.info(paste("read single cell experiment object", paste(dim(counts(sce)), collapse = ",")))
+
+    if (remove_all_zero) {
+        futile.logger::flog.info("removing genes not expressed in any cell")
+        keep_feature <- rowSums(counts(sce) > 0) > 0
+        futile.logger::flog.info(paste("keeping", sum(keep_feature), "genes"))
+        sce <- all_sceset[keep_feature, ]
+    }
+    return(sce)
+}

@@ -1,6 +1,8 @@
 #' read counts and phenotype data from tab-separated files
 #' and return a SingleCellExperiment object.
 #' 
+
+
 read_single_cell_experiment_from_tables <- function(counts_filename,
                                                     phenotypes_filename,
                                                     remove_all_zero = TRUE) {
@@ -46,7 +48,7 @@ read_single_cell_experiment_from_tables <- function(counts_filename,
             "ENSMUSG00000065947")
 
     is.spike <- (rownames(all_sceset) %in% ercc)
-    isSpike(all_sceset, type="ERCC") <- is.spike
+    isSpike(all_sceset, type="ERCC") <- is.spike        
 
     is.mito <- (rownames(all_sceset) %in% mt)
     isSpike(all_sceset, type="Mt") <- is.mito
@@ -69,7 +71,7 @@ read_single_cell_experiment_from_rds <- function(rds_filename,
         futile.logger::flog.info("removing genes not expressed in any cell")
         keep_feature <- rowSums(counts(sce) > 0) > 0
         futile.logger::flog.info(paste("keeping", sum(keep_feature), "genes"))
-        sce <- all_sceset[keep_feature, ]
+        sce <- sce[keep_feature, ]
     }
     return(sce)
 }

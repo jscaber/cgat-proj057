@@ -58,19 +58,6 @@ end_plot <- function() {
     dev.off()
 }
 
-plotExplanatory <- function(sce, variables){
-
-    if(packageVersion("scater") <= "1.8.4"){
-        plotEx <- plotExplanatoryVariables(sce,
-        variable = variables)}
-    else{                
-        plotEx <- plotExplanatoryPCs(
-        sce,
-        variable = variables,
-        npcs_to_plot = 20)
-    }
-    return(plotEx)
-}
 
 
 # Downsampling funcion (from Hemberg lab)
@@ -86,144 +73,168 @@ down_sample_matrix <- function (expr_mat) {
     return(down_sampled_mat)
 }
 
-# Name: plot_normalisation
+# Name: normalise_and_plot
 # Function: Normalises Single Cell dataset using multiple methods and plots the result
 # Inputs: single cell dataset, list of endogenous genes (not spike ins, and not mitochondrial	)
 # Outputs: png files showing effect of normalisation on PCA
-plot_normalisation <- function(sce.raw, endog_genes, ERCCconc) {
-    sce <- sce.raw
+normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", subdir=NULL) {
 
+    if(length(subdir)){
+        dir.create(subdir)
+        if(substr(subdir[1], nchar(subdir), nchar(subdir)) != "/") subdir<-paste0(subdir,"/")
+    }
     flog.info("... Raw Counts - no normalisation")
-    start_plot("rawcounts_explanatory")
-    if(packageVersion("scater") <= "1.8.4"){
-        plotEx <- plotExplanatoryVariables(sce[endog_genes, ],
-        variable = c("total_features", "total_counts"),
-        exprs_values = "counts")}
-    else{                
-        plotEx <- plotExplanatoryPCs(
-        sce[endog_genes, ],
-        variable = c("total_features", "total_counts"),
-        npcs_to_plot = 20,
-        exprs_values = "counts")}
-    print(plotEx)
-    end_plot()
-    check_normalisation(sce, ERCCconc, "rawcounts", raw.counts=TRUE)
-
+    sce <- sce.raw
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"rawcounts"), assay="counts")
+    
     flog.info("... Log count normalisation")
     logcounts(sce) = log(counts(sce)+1)
-    start_plot("logcounts_pca")
-    print(scater::plotPCA(
-        sce[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features"))
-    end_plot()
-    start_plot("logcounts_explanatory")
-    print(plotExplanatory(sce[endog_genes, ], variable = c("total_features", "total_counts")))
-    end_plot()
-    check_normalisation(sce, ERCCconc, "logcounts")
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"logcounts"))
+    if(method == "log"){
+        sce_out <- sce}
 
     flog.info("... CPM normalisation")
     logcounts(sce) <- log2(calculateCPM(sce) + 1)
-    start_plot("cpm_pca")
-    print(scater::plotPCA(
-        sce[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features"))
-    end_plot()
-    start_plot("cpm_explanatory")
-    print(plotExplanatory(sce[endog_genes, ], variable = c("total_features", "total_counts")))
-    check_normalisation(sce, ERCCconc, "cpm", raw.counts=FALSE)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"cpm"))
+    if(method == "cpm"){
+        sce_out <- sce}
 
     flog.info("... Downsampling normalisation")
     logcounts(sce) <- log2(down_sample_matrix(counts(sce)) + 1)
-    start_plot("downsampling_pca")
-    print(scater::plotPCA(
-        sce[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features"))
-    end_plot()
-    start_plot("downsampling_explanatory")
-    print(plotExplanatory(sce[endog_genes, ], variable = c("total_features", "total_counts")))
-    end_plot()
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"downsampling"))
+    if(method == "downsampling"){
+        sce_out <- sce}
 
-    flog.info("... SCRAN normalisation with ERCCs")
-    sce <- sce.raw
-    sce <- computeSpikeFactors(sce, general.use=TRUE)
-    sce <- normalize(sce)
-    start_plot("scran_ercc_sizefactorcorrelation")
-    plot(sce$total_counts/1e6, sizeFactors(sce), log="xy",
-         xlab="Library size (millions)", ylab="Size factor",
-         col=c("red", "black")[sce$group], pch=16)
-    legend("bottomright", col=c("red", "black"), pch=16, cex=1.2,
-           legend=levels(sce$group))
-    end_plot()
-    start_plot("scran_ercc_pca")
-    print(scater::plotPCA(
-        sce[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features"))
-    end_plot()
-    start_plot("scran_ercc_explanatory")
-    print(plotExplanatory(sce[endog_genes, ], variable = c("total_features", "total_counts")))
-    end_plot()
-    fit <- trendVar(sce, parametric=TRUE)
-    decomp <- decomposeVar(sce, fit)
-    top.hvgs <- order(decomp$bio, decreasing=TRUE)
-    start_plot("scran_ercc_fit")
-    plot(decomp$mean, decomp$total, xlab="Mean log-expression", ylab="Variance")
-    o <- order(decomp$mean)
-    lines(decomp$mean[o], decomp$tech[o], col="red", lwd=2)
-    points(fit$mean, fit$var, col="red", pch=16)
-    end_plot()
-    check_normalisation(sce, ERCCconc, "scran_ercc", raw.counts=FALSE)
+    if(!length(grep("ER", rownames(sce)))){
+        flog.info("... skipping SCRAN normalisation with ERCCs - no ERCCs found")}
+    else{
+        flog.info("... SCRAN normalisation with ERCCs")
+        sce <- sce.raw
+        sce <- computeSpikeFactors(sce, general.use=TRUE)
+        sce <- normalize(sce)
+        check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ercc"))
+        fit <- trendVar(sce, parametric=TRUE)
+        decomp <- decomposeVar(sce, fit)
+        top.hvgs <- order(decomp$bio, decreasing=TRUE)
+        start_plot("ercc_fit")
+        plot(decomp$mean, decomp$total, xlab="Mean log-expression", ylab="Variance")
+        o <- order(decomp$mean)
+        lines(decomp$mean[o], decomp$tech[o], col="red", lwd=2)
+        points(fit$mean, fit$var, col="red", pch=16)
+        end_plot()
+        if(method == "ercc"){
+            sce_out <- sce}
+    }
 
     flog.info("... SCRAN normalisation without ERCCs")
     sce <- sce.raw
     sce <- computeSumFactors(sce)
     sce <- normalize(sce)
-    start_plot("scran_noercc_sizefactorcorrelation")
-    plot(sce$total_counts/1e6, sizeFactors(sce), log="xy",
-         xlab="Library size (millions)", ylab="Size factor",
-         col=c("red", "black")[sce$group], pch=16)
-    legend("bottomright", col=c("red", "black"), pch=16, cex=1.2,
-           legend=levels(sce$group))
-    end_plot()
-    start_plot("scran_noercc_pca")
-    print(scater::plotPCA(
-        sce[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features"))
-    end_plot()
-    start_plot("scran_noercc_explanatory")
-    print(plotExplanatory(sce[endog_genes, ], variable = c("total_features", "total_counts")))
-    end_plot()
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"scran"))
     alt.fit <- trendVar(sce, use.spikes=FALSE) 
     alt.decomp <- decomposeVar(sce, alt.fit)
     alt.top.hvgs <- order(alt.decomp$bio, decreasing=TRUE)
-    head(alt.decomp[alt.top.hvgs,])
+    start_plot("scran_fit")
     plot(alt.decomp$mean, alt.decomp$total, xlab="Mean log-expression", ylab="Variance")
     alt.o <- order(alt.decomp$mean)
     lines(alt.decomp$mean[alt.o], alt.decomp$tech[alt.o], col="red", lwd=2)
-    start_plot("scran_noercc_fit")
-    plot(alt.decomp$mean, alt.decomp$total, xlab="Mean log-expression", ylab="Variance")
-    alt.o <- order(alt.decomp$mean)
-    lines(alt.decomp$mean[alt.o], alt.decomp$tech[alt.o], col="red", lwd=2)
-    end_plot()
-    check_normalisation(sce, ERCCconc, "scran", raw.counts=FALSE)
+    end_plot()    
+    if(method == "scran"){
+        sce_out <- sce}
+
+    flog.info("... RUVs")
+    options(stringsAsFactors = FALSE)
+    qclust <- quickCluster(sce, min.size = 30)
+    sce <- computeSumFactors(sce, sizes = 15, clusters = qclust)
+    sce <- normalize(sce)
+    # Establishing Group Matrix for RUVs
+    scIdx <- matrix(-1, ncol = max(table(sce$group)), nrow = 2)
+    i <- 1    
+    for(groupitem in levels(sce$group)){    
+        tmp <- which(sce$group == groupitem)
+        scIdx[i, 1:length(tmp)] <- tmp
+        i <- i + 1
+    }
+    cIdx <- rownames(sce)
+    # Running RUVs
+    ruvs <- RUVs(counts(sce), cIdx, k = 1, scIdx = scIdx, isLog = FALSE)
+    assay(sce, "logcounts") <- log2(
+        t(t(ruvs$normalizedCounts) / 
+            colSums(ruvs$normalizedCounts) * 1e6) + 1)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ruvs"))
+    if(method == "ruvs"){
+        sce_out <- sce}
+
+    return(sce_out)
 }
 
 # Name: check_normalisation
 # Function: Checks how well normalisations perform against known ERCC concentrations
 # Inputs: single cell dataset, list of endogenous genes (not spike ins, and not mitochondrial	)
 # Outputs: png files showing effect of normalisation on PCA
-check_normalisation <- function(sce, ERCCconc, plot.name="no_plot_name_provided", raw.counts=FALSE) {
+check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_name_provided",
+                                colours=NULL, assay="logcounts") {
 
-    #create melted tables for Raw Counts data
-    if(raw.counts == FALSE){
-        ERCC <- as_tibble(logcounts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")
+    #Sizefactorcorrelation
+    if(!length(sizeFactors(sce))){
+        start_plot(paste0(plot.name,"_sizefactorcorrelation"))
+        plot(sce$total_counts/1e6, sizeFactors(sce), log="xy",
+             xlab="Library size (millions)", ylab="Size factor",
+             col=c("green", "red")[sce$group], pch=16)
+        legend("bottomright", col=c("green", "red"), pch=16, cex=1.2,
+               legend=levels(sce$group))
+        end_plot()
+    }
+    # PCA
+    plot_pca <- scater::plotPCA(
+        sce[endog_genes, ],
+        colour_by = "group",
+        exprs_values = assay,
+        size_by = "total_features")
+    start_plot(paste0(plot.name,"_pca"))
+    print(plot_pca)
+    end_plot()
+    start_plot(paste0(plot.name,"_pca2"))
+    print(ggplot(plot_pca$data, aes(X, Y, colour = colour_by)) + geom_point() + theme_classic() +
+          scale_color_manual(labels = levels(sce$group), values=c("red", "green")) + 
+          labs(colour = "Genotype") + ylab("Principal Component 2") + 
+          xlab("Principal Component 1"))
+    end_plot()
+
+    # tSNE
+    set.seed(12345678)
+    if(assay == "counts") joint_tsne <- Rtsne(t(counts(sce)), perplexity = 15)
+    else joint_tsne <- Rtsne(t(logcounts(sce)), perplexity = 15)
+    cell_type_labels <- factor(c(as.character(colData(sce)$group), as.character(colData(sce)$group)))
+    tsnedf <- as.data.frame(joint_tsne$Y)
+    tsnedf$group <- sce$group
+    start_plot(paste0(plot.name,"_tsne"))
+    print(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + theme_bw() +
+          scale_color_manual(labels = levels(sce$group), values=c("red", "green")) +
+          labs(colour = "Genotype") + ylab("tSNE Dimension 2") + xlab("tSNE Dimension 1"))
+    end_plot()
+
+    if(packageVersion("scater") <= "1.8.4"){
+        plotEx <- plotExplanatoryVariables(sce,
+        variable = c("total_features", "total_counts"),
+        exprs_values = assay)}
+    else{                
+        plotEx <- plotExplanatoryPCs(
+        sce,
+        variable = c("total_features", "total_counts"),
+        exprs_values = assay,
+        npcs_to_plot = 20)
+    }
+    start_plot(paste0(plot.name,"_exploratory"))
+    print(plotEx)
+    end_plot()
+
+    #create melted tables for Counts data
+    if(assay == "counts"){
+        ERCC <- as_tibble(counts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")
     }
     else {
-        ERCC <- as_tibble(counts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")
+        ERCC <- as_tibble(logcounts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")
     }
     ERCCplot <- inner_join(ERCC, ERCCconc[,1:2], by = "ID")
     dfplot <- melt(ERCCplot,id.vars = c("ID","Mix1"))
@@ -249,133 +260,12 @@ check_normalisation <- function(sce, ERCCconc, plot.name="no_plot_name_provided"
     end_plot()
 }
 
-# Name: runRUV
-# Function: Runs RUVSeq on Single Cell Experiment Set
-# Inputs: 
-# Outputs: 
-runRUV <- function(sce, endog_genes, ERCCconc) {
-
-    flog.info("Running RUVs")
-    options(stringsAsFactors = FALSE)
-    qclust <- quickCluster(sce, min.size = 30)
-    sce <- computeSumFactors(sce, sizes = 15, clusters = qclust)
-    sce <- normalize(sce)
-
-    # Establishing Group Matrix for RUVs
-
-    scIdx <- matrix(-1, ncol = max(table(sce$group)), nrow = 2)
-    tmp <- which(sce$group == "Ta1neg")
-    scIdx[1, 1:length(tmp)] <- tmp
-    tmp <- which(sce$group == "Ta1pos")
-    scIdx[2, 1:length(tmp)] <- tmp
-    cIdx <- rownames(sce)
-
-    # Running RUVs
-    ruvs <- RUVs(counts(sce), cIdx, k = 1, scIdx = scIdx, isLog = FALSE)
-    assay(sce, "logcounts") <- log2(
-        t(t(ruvs$normalizedCounts) / 
-            colSums(ruvs$normalizedCounts) * 1e6) + 1)
-
-    flog.info("Plotting RUVs")
-    # PCA
-    plot<- scater::plotPCA(
-        sce[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features"
-    )
-    start_plot("ruv_pca")
-    print(ggplot(plot$data, aes(X, Y, colour = colour_by)) + geom_point() + theme_classic() +
-          scale_color_manual(labels = c("Ta1-", "Ta1+"), values=c("red", "green")) + 
-          labs(colour = "Genotype") + ylab("Principal Component 2") + 
-          xlab("Principal Component 1"))
-    end_plot()
-
-    # tSNE
-    set.seed(345873945)
-    joint_tsne <- Rtsne(t(logcounts(sce)), perplexity = 15)
-    cell_type_labels <- factor(c(as.character(colData(sce)$group), as.character(colData(sce)$group)))
-    tsnedf <- as.data.frame(joint_tsne$Y)
-    tsnedf$group <- sce$group
-    start_plot("ruv_tsne")
-    print(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + theme_bw() +
-          scale_color_manual(labels = c("Ta1-", "Ta1+"), values=c("red", "green")) +
-          labs(colour = "Genotype") + ylab("tSNE Dimension 2") + xlab("tSNE Dimension 1"))
-    end_plot()
-
-    # Explanatory
-    start_plot("ruv_explanatory")
-    print(plotExplanatory(sce[endog_genes, ], variable = c("total_features", "total_counts")))
-    end_plot()
-
-    check_normalisation(sce, ERCCconc, "ruvs", raw.counts=FALSE)
-
-    return(ruvs)    
-}
 
 # Name: mergeAllen
 # Function: Merges 2018 Allen Dataset
 # Inputs: 
 # Outputs: 
 mergeAllen <- function(sce, sce_allen, ERCCconc) {
-
-
-
-
-    sce_allen$group <- as.factor(sce_allen$cluster)
-    sce_allen <- calculateQCMetrics(sce_allen)
-    endog_genes <- !rowData(sce_allen)$is_feature_control
-
-    sce_allen <- computeSumFactors(sce_allen)
-    sce_allen <- normalize(sce_allen)
-
-    plot(sce_allen$total_counts/1e6, sizeFactors(sce_allen), log="xy",
-         xlab="Library size (millions)", ylab="Size factor",
-         col=c("red", "black")[sce_allen$group], pch=16)
-    legend("bottomright", col=c("red", "black"), pch=16, cex=1.2,
-           legend=levels(sce_allen$group))
-    png('ScranSizefactor.png', width = 6, height = 6, units = 'in', res = 300)
-    plot(sce_allen$total_counts/1e6, sizeFactors(sce_allen), log="xy",
-         xlab="Library size (millions)", ylab="Size factor",
-         col=c("red", "black")[sce_allen$group], pch=16)
-    legend("bottomright", col=c("red", "black"), pch=16, cex=1.2,
-           legend=levels(sce_allen$group))
-    dev.off()
-
-
-    png('ScranPCA_Allen.png', width = 6, height = 6, units = 'in', res = 300)
-    plotPCA(
-        sce_allen[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features_by_counts"
-    )
-    dev.off()
-    png('Scran-Corr_Allen.png', width = 6, height = 6, units = 'in', res = 300)
-    print(plotExplanatory(sce[endog_genes, ], variable = c("total_features", "total_counts")))
-    dev.off()
-
-    alt.fit <- trendVar(sce_allen, use.spikes=FALSE) 
-    alt.decomp <- decomposeVar(sce_allen, alt.fit)
-    alt.top.hvgs <- order(alt.decomp$bio, decreasing=TRUE)
-    head(alt.decomp[alt.top.hvgs,])
-    plot(alt.decomp$mean, alt.decomp$total, xlab="Mean log-expression", ylab="Variance")
-    alt.o <- order(alt.decomp$mean)
-    lines(alt.decomp$mean[alt.o], alt.decomp$tech[alt.o], col="red", lwd=2)
-
-    png('ScranFit_Allen.png', width = 6, height = 6, units = 'in', res = 300)
-    plot(alt.decomp$mean, alt.decomp$total, xlab="Mean log-expression", ylab="Variance")
-    alt.o <- order(alt.decomp$mean)
-    lines(alt.decomp$mean[alt.o], alt.decomp$tech[alt.o], col="red", lwd=2)
-    dev.off()
-
-    sce_allen <- runTSNE(sce_allen, perplexity=50)
-    plotTSNE(sce_allen, colour_by = "group")
-
-
-    png('TSNE_L23.png', width = 6, height = 6, units = 'in', res = 300)
-    plotTSNE(sce_allen, colour_by = "group")
-    dev.off()
-
-
 
     sce_counts <- counts(sce)
     design_sce <- colData(sce)[,c("sample_id","group")]
@@ -399,49 +289,6 @@ mergeAllen <- function(sce, sce_allen, ERCCconc) {
     sce_merged <- calculateQCMetrics(sce_merged)
     endog_genes <- !rowData(sce_merged)$is_feature_control
     sce_merged.raw <-sce_merged
-
-    sce_merged <- computeSumFactors(sce_merged)
-    sce_merged <- normalize(sce_merged)
-
-    plot(sce_merged$total_counts/1e6, sizeFactors(sce_merged), log="xy",
-         xlab="Library size (millions)", ylab="Size factor",
-         col=c("red", "black")[sce_merged$group], pch=16)
-    legend("bottomright", col=c("red", "black"), pch=16, cex=1.2,
-           legend=levels(sce_merged$group))
-    png('ScranSizefactor.png', width = 6, height = 6, units = 'in', res = 300)
-    plot(sce_merged$total_counts/1e6, sizeFactors(sce_merged), log="xy",
-         xlab="Library size (millions)", ylab="Size factor",
-         col=c("red", "black")[sce_merged$group], pch=16)
-    legend("bottomright", col=c("red", "black"), pch=16, cex=1.2,
-           legend=levels(sce_merged$group))
-    dev.off()
-
-    plot<- plotPCA(
-        sce_merged[endog_genes, ],
-        colour_by = "group",
-        size_by = "total_features_by_counts"
-    )
-    plot
-    png('ScranPCA_Allen.png', width = 6, height = 6, units = 'in', res = 300)
-    plot
-    dev.off()
-    plot <- plotExplanatoryPCs(
-        sce_merged[endog_genes, ],
-        variable = c("total_features_by_counts", "total_counts"),
-        npcs_to_plot = 20
-    )
-    plot
-    png('Scran-Corr_Allen.png', width = 6, height = 6, units = 'in', res = 300)
-    plot
-    dev.off()
-
-
-    sce_merged <- runTSNE(sce_merged, perplexity=50)
-    plotTSNE(sce_merged, colour_by = "group")
-    png('TSNE_merged.png', width = 6, height = 6, units = 'in', res = 300)
-    plotTSNE(sce_merged, colour_by = "group")
-    dev.off()
-
     sum(rownames(sce) %in% rownames(sce_allen))/nrow(sce)
     sum(rownames(sce_allen) %in% rownames(sce))/nrow(sce_allen)
 
@@ -552,20 +399,15 @@ run <- function(opt) {
     # Check for mouse cell cycle markers
     flog.info("calculating cell cycle markers")
     mm.pairs <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package="scran"))
-    assigned <- cyclone(sce, pairs=mm.pairs)
-    write.table(table(assigned$phases), "cell_cycle_markers.tsv", 
-                quote = FALSE, sep = "\t", row.names = FALSE)
+    #assigned <- cyclone(sce, pairs=mm.pairs)
+    #write.table(table(assigned$phases), "cell_cycle_markers.tsv", 
+    #            quote = FALSE, sep = "\t", row.names = FALSE)
 
     flog.info("Performing normalisations ...")
-    plot_normalisation(sce.raw, endog_genes, ERCCconc)
-
-    flog.info("Running RUVs and plotting vs ERCCs")
-    ruvs <- runRUV(sce.raw, endog_genes, ERCCconc)
+    sce <-  normalise_and_plot(sce.raw, endog_genes, ERCCconc, 
+            method=opt$normalisation, subdir="normalisation_experiment")
 
     flog.info("Plotting SC3")
-    assay(sce, "logcounts") <- log2(
-        t(t(ruvs$normalizedCounts) / colSums(ruvs$normalizedCounts) * 1e6) + 1
-    )
     rowData(sce)$feature_symbol = rownames(sce)
     sce3 <- sc3(sce, ks = 10, biology = TRUE)
     start_plot("SC3")
@@ -594,7 +436,17 @@ run <- function(opt) {
     rownames(data[!is.na(data[rownames(counts_table3),]$ensembl_gene_id),])
     counts_table3 <- counts_table3[rownames(data[!is.na(data[rownames(counts_table3),]$ensembl_gene_id),]),]
     rownames(counts_table3) <- data[rownames(counts_table3),]$ensembl_gene_id
+    sce_allen  <- SingleCellExperiment(
+        assays = list(counts = as.array.Array(counts_table3)), 
+        colData = design_allen.filtered
+    )
+    sce_allen$group <- as.factor(sce_allen$cluster)
+    sce_allen <- calculateQCMetrics(sce_allen)
+    endog_genes <- !rowData(sce_allen)$is_feature_control
 
+    flog.info("Normalising Allen Data ...")
+    sce_allen <-  normalise_and_plot(sce_allen, endog_genes, ERCCconc, 
+            method=opt$normalisation, subdir="normalisation_allen")
 
 }
 
@@ -619,7 +471,7 @@ main <- function() {
             "--norm",
             dest = "normalisation",
             type = "character",
-            default = "ruvs",
+            default = "cpm",
             help = paste("which normalisation to use.")
         ),
         make_option(

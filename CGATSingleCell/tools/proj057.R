@@ -73,11 +73,42 @@ down_sample_matrix <- function (expr_mat) {
     return(down_sampled_mat)
 }
 
+mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",dataset="mmusculus_gene_ensembl", host = "jul2018.archive.ensembl.org")
+
+getmart_ensembl <- function(values){
+    data<- getBM(
+        filters= "ensembl_gene_id", 
+        attributes= c("ensembl_gene_id", "mgi_symbol", "description"),
+        values= values,
+        mart= mart)
+    data$description <- gsub("\t", "", data$description)
+    return(data)
+}
+getmart_ensembl2 <- function(values){
+    data<- getBM(
+        filters= "ensembl_gene_id", 
+        attributes= c("ensembl_gene_id", "mgi_symbol", "description","entrezgene"),
+        values= values,
+        mart= mart)
+    data$description <- gsub("\t", "", data$description)
+    return(data)
+}
+getmart_symbol <- function(values){
+    data<- getBM(
+        filters= "mgi_symbol", 
+        attributes= c("entrezgene","ensembl_gene_id", "mgi_symbol", "description"),
+        values= values,
+        mart= mart)
+    data$description <- gsub("\t", "", data$description)
+    return(data)
+}
+
+
 # Name: normalise_and_plot
 # Function: Normalises Single Cell dataset using multiple methods and plots the result
 # Inputs: single cell dataset, list of endogenous genes (not spike ins, and not mitochondrial	)
 # Outputs: png files showing effect of normalisation on PCA
-normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", subdir=NULL) {
+normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", subdir=NULL, col_scale=NULL) {
 
     if(length(subdir)){
         dir.create(subdir)
@@ -85,23 +116,23 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     }
     flog.info("... Raw Counts - no normalisation")
     sce <- sce.raw
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"rawcounts"), assay="counts")
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"rawcounts"), assay="counts", col_scale=col_scale)
     
     flog.info("... Log count normalisation")
     logcounts(sce) = log(counts(sce)+1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"logcounts"))
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"logcounts"),col_scale=col_scale)
     if(method == "log"){
         sce_out <- sce}
 
     flog.info("... CPM normalisation")
     logcounts(sce) <- log2(calculateCPM(sce) + 1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"cpm"))
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"cpm"),col_scale=col_scale)
     if(method == "cpm"){
         sce_out <- sce}
 
     flog.info("... Downsampling normalisation")
     logcounts(sce) <- log2(down_sample_matrix(counts(sce)) + 1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"downsampling"))
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"downsampling"),col_scale=col_scale)
     if(method == "downsampling"){
         sce_out <- sce}
 
@@ -112,7 +143,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
         sce <- sce.raw
         sce <- computeSpikeFactors(sce, general.use=TRUE)
         sce <- normalize(sce)
-        check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ercc"))
+        check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ercc"),col_scale=col_scale)
         fit <- trendVar(sce, parametric=TRUE)
         decomp <- decomposeVar(sce, fit)
         top.hvgs <- order(decomp$bio, decreasing=TRUE)
@@ -130,7 +161,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     sce <- sce.raw
     sce <- computeSumFactors(sce)
     sce <- normalize(sce)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"scran"))
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"scran"),col_scale=col_scale)
     alt.fit <- trendVar(sce, use.spikes=FALSE) 
     alt.decomp <- decomposeVar(sce, alt.fit)
     alt.top.hvgs <- order(alt.decomp$bio, decreasing=TRUE)
@@ -148,10 +179,12 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     sce <- computeSumFactors(sce, sizes = 15, clusters = qclust)
     sce <- normalize(sce)
     # Establishing Group Matrix for RUVs
-    scIdx <- matrix(-1, ncol = max(table(sce$group)), nrow = 2)
-    i <- 1    
+    scIdx <- matrix(-1, ncol = max(table(sce$group)), nrow = length(levels(sce$group)))
+    i <- 1
+    write_tsv(as.data.frame(colData(sce)),  "colDataRUVs.tsv")
+    write_tsv(as.data.frame(scIdx),  "scIdx.tsv")
     for(groupitem in levels(sce$group)){    
-        tmp <- which(sce$group == groupitem)
+        tmp <- which(sce$group == groupitem)        
         scIdx[i, 1:length(tmp)] <- tmp
         i <- i + 1
     }
@@ -161,7 +194,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     assay(sce, "logcounts") <- log2(
         t(t(ruvs$normalizedCounts) / 
             colSums(ruvs$normalizedCounts) * 1e6) + 1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ruvs"))
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ruvs"),col_scale=col_scale)
     if(method == "ruvs"){
         sce_out <- sce}
 
@@ -173,15 +206,15 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
 # Inputs: single cell dataset, list of endogenous genes (not spike ins, and not mitochondrial	)
 # Outputs: png files showing effect of normalisation on PCA
 check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_name_provided",
-                                colours=NULL, assay="logcounts") {
+                                colours=NULL, assay="logcounts", col_scale=NULL) {
 
     #Sizefactorcorrelation
     if(!length(sizeFactors(sce))){
         start_plot(paste0(plot.name,"_sizefactorcorrelation"))
         plot(sce$total_counts/1e6, sizeFactors(sce), log="xy",
              xlab="Library size (millions)", ylab="Size factor",
-             col=c("green", "red")[sce$group], pch=16)
-        legend("bottomright", col=c("green", "red"), pch=16, cex=1.2,
+             col=col_scale[sce$group], pch=16)
+        legend("bottomright", col=col_scale, pch=16, cex=1.2,
                legend=levels(sce$group))
         end_plot()
     }
@@ -196,7 +229,7 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
     end_plot()
     start_plot(paste0(plot.name,"_pca2"))
     print(ggplot(plot_pca$data, aes(X, Y, colour = colour_by)) + geom_point() + theme_classic() +
-          scale_color_manual(labels = levels(sce$group), values=c("red", "green")) + 
+          scale_color_manual(labels = levels(sce$group), values=col_scale) + 
           labs(colour = "Genotype") + ylab("Principal Component 2") + 
           xlab("Principal Component 1"))
     end_plot()
@@ -210,7 +243,7 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
     tsnedf$group <- sce$group
     start_plot(paste0(plot.name,"_tsne"))
     print(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + theme_bw() +
-          scale_color_manual(labels = levels(sce$group), values=c("red", "green")) +
+          scale_color_manual(labels = levels(sce$group), values=col_scale) +
           labs(colour = "Genotype") + ylab("tSNE Dimension 2") + xlab("tSNE Dimension 1"))
     end_plot()
 
@@ -230,6 +263,11 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
     end_plot()
 
     #create melted tables for Counts data
+    if(!length(grep("ER", rownames(sce)))){
+        # skip correlation with ERCCs if no ERCCs
+        return()
+    }
+
     if(assay == "counts"){
         ERCC <- as_tibble(counts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")
     }
@@ -265,7 +303,7 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
 # Function: Merges 2018 Allen Dataset
 # Inputs: 
 # Outputs: 
-mergeAllen <- function(sce, sce_allen, ERCCconc) {
+mergeAllen <- function(list_sces, ERCCconc) {
 
     sce_counts <- counts(sce)
     design_sce <- colData(sce)[,c("sample_id","group")]
@@ -405,7 +443,8 @@ run <- function(opt) {
 
     flog.info("Performing normalisations ...")
     sce <-  normalise_and_plot(sce.raw, endog_genes, ERCCconc, 
-            method=opt$normalisation, subdir="normalisation_experiment")
+            method=opt$normalisation, subdir="normalisation_experiment",
+            col_scale=c("red","green"))
 
     flog.info("Plotting SC3")
     rowData(sce)$feature_symbol = rownames(sce)
@@ -427,7 +466,7 @@ run <- function(opt) {
 
     flog.info("Converting Allen Atlas Data to ENSEMBL")
     rownames(counts_table2)<- row_table[rownames(counts_table2),]$gene_symbol
-    data <- getmartsymbol(rownames(counts_table2))
+    data <- getmart_symbol(rownames(counts_table2))
     data <- data[match(unique(data$mgi_symbol), data$mgi_symbol),]
     rownames(data) <- data$mgi_symbol
     data <- data[match(unique(data$ensembl_gene_id), data$ensembl_gene_id),]
@@ -446,8 +485,11 @@ run <- function(opt) {
 
     flog.info("Normalising Allen Data ...")
     sce_allen <-  normalise_and_plot(sce_allen, endog_genes, ERCCconc, 
-            method=opt$normalisation, subdir="normalisation_allen")
+            method=opt$normalisation, subdir="normalisation_allen",
+            col_scale=c("azure4", "black", "lightgrey"))
 
+    flog.info("Merging datasets ...")
+    
 }
 
 main <- function() {

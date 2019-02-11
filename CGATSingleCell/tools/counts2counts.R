@@ -190,27 +190,24 @@ plot_qc <- function(data_sceset, section, factors, opt) {
             end_plot()
         }
         
+
         flog.info(paste("plotting percentage counts in mitochondrial genes into"))
-        start_plot(paste("qc_percentage_counts_mitochondrial_genes", section, factor, sep = "-"))
-        print(scater::plotPhenoData(
+        start_plot(paste("qc_percentage_counts_mitochondrial_genes", section, factor, sep = "-"))     
+        print(scater::plotColData(
                           data_sceset,
-                          aes_string(
-                              x = "total_features",
-                              y = "pct_counts_Mt",
-                              colour = factor
-                              )
+                          x = "total_features",
+                          y = "pct_counts_Mt",
+                          colour = factor
                       ))
         end_plot()
 
         flog.info(paste("plotting percentage counts in ERCC genes"))
         start_plot(paste("qc_percentage_counts_ERCC_genes", section, factor, sep = "-"))
-        print(scater::plotPhenoData(
-                          data_sceset,
-                          aes_string(
-                          x = "total_features",
-                          y = "pct_counts_ERCC",
-                          colour = factor
-                      )
+        print(scater::plotColData(
+                      data_sceset,
+                      x = "total_features",
+                      y = "pct_counts_ERCC",
+                      colour = factor
                       ))
         end_plot()
 
@@ -362,7 +359,7 @@ run <- function(opt) {
     ## Set up gene lengths for RPKM
     flog.info("outputting filtered counts data")
     write.table(counts(filtered_sceset),
-                file = "",
+                file = "Filtered_Counts_Data.tsv",
                 sep = "\t",
                 quote = FALSE,
                 row.names = TRUE,

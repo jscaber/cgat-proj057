@@ -34,9 +34,7 @@ suppressMessages(library(tidyverse))
 suppressMessages(library(reshape2))	
 suppressMessages(library(RUVSeq))
 suppressMessages(library(SingleCellExperiment))
-suppressMessages(library(sva))	
-suppressMessages(library(zinbwave))
-suppressMessages(library(DESeq))
+
 
 source(file.path(Sys.getenv("R_ROOT"), "io.R"))
 source(file.path(Sys.getenv("R_ROOT"), "experiment.R"))
@@ -72,6 +70,42 @@ down_sample_matrix <- function (expr_mat) {
     down_sampled_mat <- apply(expr_mat, 2, down_sample)
     return(down_sampled_mat)
 }
+
+get_variable_genes<-function(data, pheno) {
+var.genes1=vector("list")
+experiment=unique(pheno$Study_ID)
+j=1
+for(exp in experiment){
+  dat.sub=data[,pheno$Study_ID==exp]
+    genes.list=vector("list")
+    med.dat=apply(dat.sub,1,median)
+    var.dat=apply(dat.sub,1,var)
+    quant.med=unique(quantile(med.dat,prob=seq(0,1,length=11),type=5))
+    genes.list=vector("list",length=length(quant.med))
+    for(i in 1:length(quant.med)){
+      if(i==1){
+        filt1=med.dat<=quant.med[i]
+        var.temp=var.dat[filt1]
+        quant.var=quantile(var.temp,na.rm=T)
+        filt2=var.temp>quant.var[4]
+        genes.list[[i]]=names(var.temp)[filt2]
+      }
+      else {
+        filt1=med.dat<=quant.med[i]&med.dat>quant.med[i-1]
+        var.temp=var.dat[filt1]
+        quant.var=quantile(var.temp,na.rm=T)
+        filt2=var.temp>quant.var[4]
+        genes.list[[i]]=names(var.temp)[filt2]
+      }
+    }
+    temp=length(genes.list)
+    var.genes1[[j]]=unlist(genes.list[1:temp-1])
+    j=j+1
+}
+var.genes=Reduce(intersect, var.genes1)
+return(var.genes)
+}
+
 
 mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",dataset="mmusculus_gene_ensembl", host = "jul2018.archive.ensembl.org")
 
@@ -181,8 +215,6 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     # Establishing Group Matrix for RUVs
     scIdx <- matrix(-1, ncol = max(table(sce$group)), nrow = length(levels(sce$group)))
     i <- 1
-    write_tsv(as.data.frame(colData(sce)),  "colDataRUVs.tsv")
-    write_tsv(as.data.frame(scIdx),  "scIdx.tsv")
     for(groupitem in levels(sce$group)){    
         tmp <- which(sce$group == groupitem)        
         scIdx[i, 1:length(tmp)] <- tmp
@@ -209,7 +241,7 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
                                 colours=NULL, assay="logcounts", col_scale=NULL) {
 
     #Sizefactorcorrelation
-    if(!length(sizeFactors(sce))){
+    if(length(sizeFactors(sce)) != 0){
         start_plot(paste0(plot.name,"_sizefactorcorrelation"))
         plot(sce$total_counts/1e6, sizeFactors(sce), log="xy",
              xlab="Library size (millions)", ylab="Size factor",
@@ -303,76 +335,39 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
 # Function: Merges 2018 Allen Dataset
 # Inputs: 
 # Outputs: 
-mergeAllen <- function(list_sces, ERCCconc) {
+mergeSceRaw <- function(list_sces) {
 
-    sce_counts <- counts(sce)
-    design_sce <- colData(sce)[,c("sample_id","group")]
-    design_allen.filtered_merge <- design_allen.filtered[,c("sample_name", "cluster")]
-    colnames(design_allen.filtered_merge) <- c("sample_id", "group")
-    merged_counts <- merge(counts_table3, sce_counts, by="row.names")
-    design_merged <- rbind(design_sce, design_allen.filtered_merge)
-    rownames(design_merged) <- design_merged$sample_id
-    head(merged_counts[,1:10])
-    rownames(merged_counts) <- merged_counts$Row.names
-    merged_counts <- merged_counts[,rownames(design_merged)]
-
-    table(colnames(as.array.Array(merged_counts)) == rownames(design_merged))
-
+    counts_mat <- list()
+    designs <- list()
+    for(i in 1:length(list_sces)){
+        counts_mat[[i]] = counts(list_sces[[i]])
+        designs[i] = colData(list_sces[[i]])[,c("sample_id","group")]
+    }
+    combined_counts <- Reduce(function(...) merge(..., by='row.names'), counts_mat)
+    combined_counts <- as.data.frame(combined_counts)
+    combined_designs <- as.data.frame(do.call(rbind, designs))
+    rownames(combined_designs) <- combined_designs$sample_id
+    rownames(combined_counts) <- combined_counts$Row.names
+    combined_counts <- combined_counts[,rownames(combined_designs)]
+    write.table(combined_designs, "combined_designs.tsv", quote = FALSE, sep = "\t", row.names = TRUE)
+    write.table(combined_counts, "combined_counts.tsv", quote = FALSE, sep = "\t", row.names = TRUE)
     sce_merged  <- SingleCellExperiment(
-        assays = list(counts = as.array.Array(merged_counts)), 
-        colData = design_merged
+        assays = list(counts = as.array.Array(combined_counts)), 
+        colData = combined_designs
     )
+    return(sce_merged)
+}
 
-    sce_merged$group <- as.factor(sce_merged$group)
-    sce_merged <- calculateQCMetrics(sce_merged)
-    endog_genes <- !rowData(sce_merged)$is_feature_control
-    sce_merged.raw <-sce_merged
-    sum(rownames(sce) %in% rownames(sce_allen))/nrow(sce)
-    sum(rownames(sce_allen) %in% rownames(sce))/nrow(sce_allen)
+sce_common <- function(sce_list){
+    rownames_list <- lapply(sce_list, rownames)
+    common_rownames <- Reduce(intersect, rownames_list)
+    sce_list <- lapply(sce_list, function(sce){sce[rownames(sce) %in% common_rownames,]})
 
-    sce_reduced <- sce[rownames(sce) %in% rownames(sce_allen),]
-    sce_allen_reduced <- sce_allen[rownames(sce_allen) %in% rownames(sce),]
-    sce_reduced <- sce_reduced[order(rownames(sce_reduced)),]
-    sce_allen_reduced <- sce_allen_reduced[order(rownames(sce_allen_reduced)),]
+    return(sce_list)
+}
 
 
-    combined_logcounts <- cbind(logcounts(sce_reduced), logcounts(sce_allen_reduced))
-    dataset_labels <- rep(c("ta1", "allen"), times=c(ncol(sce_reduced), ncol(sce_allen_reduced)))
-    pheno <- data.frame(Sample_ID = colnames(combined_logcounts),
-                    Study_ID=dataset_labels,
-                    Celltype=paste(cell_type_labels, dataset_labels, sep="-"))
-
-
-    var.genes = get_variable_genes(combined_logcounts, pheno)
-
-    corrected <- mnnCorrect(logcounts(sce_reduced), logcounts(sce_allen_reduced), subset.row=var.genes, k=50, sigma=1, pc.approx=TRUE, svd.dim=3 )
-
-    dim(corrected$pairs[[1]]) # sce_reduced
-    dim(corrected$pairs[[2]]) # sce_allen_reduced
-    head(corrected$pairs[[2]])
-    total_pairs <- nrow(corrected$pairs[[2]])
-    n_unique_sce_allen_reduced <- length(unique((corrected$pairs[[2]][,1])))
-    n_unique_sce_reduced <- length(unique((corrected$pairs[[2]][,1])))
-    joint_expression_matrix <- cbind(corrected$corrected[[1]], corrected$corrected[[2]])
-
-    set.seed(345873945)
-    joint_tsne <- Rtsne(t(joint_expression_matrix), perplexity = 50)
-
-    cell_type_labels <- factor(c(as.character(colData(sce)$group), as.character(colData(sce_allen)$group)))
-    tsnedf <- as.data.frame(joint_tsne$Y)
-    tsnedf$group <- cell_type_labels
-
-    ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
-      scale_color_manual(values=c("azure4", "black", "lightgrey", "red", "green")) +
-      ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1")
-      
-      png('TSNE_mmn_merged.png', width = 6, height = 4, units = 'in', res = 300)
-    ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
-      scale_color_manual(values=c("azure4", "black", "lightgrey", "red", "green")) +
-      ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1")
-    dev.off()
-
-
+mergeSeurat <- function(sce_reduced){
     require("Seurat")
     set.seed(1234567)
 
@@ -437,9 +432,9 @@ run <- function(opt) {
     # Check for mouse cell cycle markers
     flog.info("calculating cell cycle markers")
     mm.pairs <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package="scran"))
-    #assigned <- cyclone(sce, pairs=mm.pairs)
-    #write.table(table(assigned$phases), "cell_cycle_markers.tsv", 
-    #            quote = FALSE, sep = "\t", row.names = FALSE)
+    assigned <- cyclone(sce, pairs=mm.pairs)
+    write.table(table(assigned$phases), "cell_cycle_markers.tsv", 
+                quote = FALSE, sep = "\t", row.names = FALSE)
 
     flog.info("Performing normalisations ...")
     sce <-  normalise_and_plot(sce.raw, endog_genes, ERCCconc, 
@@ -480,6 +475,7 @@ run <- function(opt) {
         colData = design_allen.filtered
     )
     sce_allen$group <- as.factor(sce_allen$cluster)
+    sce_allen$sample_id <- sce_allen$sample_name
     sce_allen <- calculateQCMetrics(sce_allen)
     endog_genes <- !rowData(sce_allen)$is_feature_control
 
@@ -489,7 +485,47 @@ run <- function(opt) {
             col_scale=c("azure4", "black", "lightgrey"))
 
     flog.info("Merging datasets ...")
-    
+    sce_merged <- mergeSceRaw(list(sce, sce_allen))
+    sce_merged$group <- as.factor(sce_merged$group)
+    sce_merged <- calculateQCMetrics(sce_merged)
+    endog_genes <- !rowData(sce_merged)$is_feature_control
+    sce_merged <-  normalise_and_plot(sce_merged, endog_genes, ERCCconc, 
+            method=opt$normalisation, subdir="normalisation_joint",
+            col_scale=c("red", "green"," azure4", "black", "lightgrey"))
+
+    flog.info("Merging datasets using mnnCorrect ...")    
+    options(browserNLdisabled = TRUE)
+    browser()
+    sce_list <- list(sce, sce_allen)
+    sce_list <- sce_common(sce_list)
+    mnn_matrix <- do.call(cbind, lapply(sce_list,logcounts))
+    cell_type_labels <- unlist(lapply(sce_list, function(...) as.character(colData(...)$group)))
+    dataset_labels <- rep(1:length(sce_list), times=lengths(lapply(sce_list,colnames)))
+    pheno <- data.frame(Sample_ID = colnames(mnn_matrix),
+                    Study_ID=dataset_labels,
+                    Celltype=paste(cell_type_labels, dataset_labels, sep="-"))
+    var.genes = get_variable_genes(mnn_matrix, pheno)
+    corrected <- do.call(mnnCorrect, c(lapply(sce_list, logcounts),
+                                       subset.row=var.genes, k=50, sigma=1,
+                                       pc.approx=TRUE, svd.dim=3 ))
+
+    joint_expression_matrix <- cbind(corrected$corrected[[1]], corrected$corrected[[2]])
+
+    set.seed(345873945)
+    joint_tsne <- Rtsne(t(joint_expression_matrix), perplexity = 50)
+
+    cell_type_labels <- factor(c(as.character(colData(sce)$group),
+                                 as.character(colData(sce_allen)$group)))
+    tsnedf <- as.data.frame(joint_tsne$Y)
+    tsnedf$group <- cell_type_labels
+
+      png('TSNE_mmn_merged.png', width = 6, height = 4, units = 'in', res = 300)
+    ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
+      scale_color_manual(values=c("azure4", "black", "lightgrey", "red", "green")) +
+      ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1")
+    dev.off()
+    options(browserNLdisabled = TRUE)
+    browser()
 }
 
 main <- function() {

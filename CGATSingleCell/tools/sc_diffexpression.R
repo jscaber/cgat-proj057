@@ -4,15 +4,10 @@
 #' 
 #' Example usage:
 #' 
-#' cgat sc-counts2counts --counts-filename=featurecounts.tsv --phenotypes-filename=phenodata.tsv --factor=group,mouse_id,collection_date,slice_depth,slice_number,pipette_visual,timepoint > filtered_counts.tsv
+#' cgat-singlecell sc_diffexpression --rds-filename=sce.rds --phenotypes-filename=phenodata.tsv --factor=group,mouse_id,collection_date,slice_depth,slice_number,pipette_visual,timepoint > filtered_counts.tsv
 #'
-#' `feature_counts.tsv` is a table (tab-separated) of ngenes x ncells,
-#' that is the genes are in rows and the columns are cells.
+#' `sce.rds` is a single cell experiment object after filtering
 #'
-#' `phenodata.tsv` is a table (tab-separated) of ncells x nfeatures,
-#' that is rows are cells and features are in columns. The table should contain
-#' a column called `sample_id` that will match the columns in the table
-#' `feature_counts.tsv`.
 #'
 #' Features can then be selected in the `--factor` option to be
 #' plotted.
@@ -32,6 +27,8 @@ suppressMessages(library(DESeq2))
 suppressMessages(library(biomaRt))
 suppressMessages(library(tidyverse))
 suppressMessages(library(RUVSeq))
+suppressMessages(library(Cairo))
+suppressMessages(library(scran))
 
 source(file.path(Sys.getenv("R_ROOT"), "io.R"))
 source(file.path(Sys.getenv("R_ROOT"), "experiment.R"))
@@ -83,10 +80,9 @@ end_plot <- function() {
     dev.off()
 }
 
-makeTPMtable  <- function(genelist, abundance){
-  genelist.df <- getmart(genelist[grep("ENS",genelist)])
-  
-  genelist.df2 <-  as_tibble(t(matrix(rep(genelist[grep("ENS",genelist, invert=TRUE)],each=3), ncol = length(genelist[grep("ENS",genelist, invert=TRUE)]), nrow = 3)))
+makeTPMtable  <- function(genelist, abundance, design){
+  genelist.df <- getmart_ensembl(genelist[grep("ENS",genelist)])
+  genelist.df2 <-  as.data.frame(t(matrix(rep(genelist[grep("ENS",genelist, invert=TRUE)],each=3), ncol = length(genelist[grep("ENS",genelist, invert=TRUE)]), nrow = 3)))
   colnames(genelist.df2) <- colnames(genelist.df)
   genelist.df <- bind_rows(genelist.df,as_tibble(genelist.df2))
   
@@ -95,15 +91,15 @@ makeTPMtable  <- function(genelist, abundance){
 
   dftemp <- as_tibble(t(abundance[genelist,]), rownames = "sample_id")
   dftemp <- dftemp %>% rename_at(vars(genelist), ~ genelist.names)
-  dftemp$group <- colData(sce)[dftemp$sample_id,]$group
-  dftemp$total_features <- colData(sce)[dftemp$sample_id,]$total_features
+  dftemp$group <- design[dftemp$sample_id,]$group
+  dftemp$total_features <- design[dftemp$sample_id,]$total_features
   dftemp
   return(dftemp)
 }
 plotTPMs <- function(dftemp){
   dftemp %>% 
     gather(key = "var", value="value", -group, -sample_id, -total_features) %>% 
-    mutate(var = factor(var, levels=unique(var))) %>%
+    dplyr::mutate(var = factor(var, levels=unique(var))) %>%
     ggplot(aes(x = group, y = value, color = total_features)) +
     geom_point(position = position_jitter(w = 0.15, h = 0)) +
     facet_wrap(~ var, scales = "free") + theme_bw() +
@@ -116,6 +112,8 @@ run <- function(opt) {
 
     flog.info("Reading in experiment")
     sce <- read_single_cell_experiment_from_rds(opt$rds_filename)
+    sce <- computeSumFactors(sce)
+    sce <- normalize(sce)
     sce$group = as.factor(sce$group)
     endog_genes <- !rowData(sce)$is_feature_control
     keep <- rowSums(counts(sce) >= 5) >= 25
@@ -134,7 +132,7 @@ run <- function(opt) {
     assays(zinb) <- assays(zinb)[nms]
     # epsilon setting as recommended by the ZINB-WaVE integration paper
     zinb <- zinbwave(zinb, K=1, X=opt$zinb_model, BPPARAM=SerialParam(), epsilon=1e12)
-    dds <- DESeqDataSet(zinb, design = opt$deseq_model)
+    dds <- DESeqDataSet(zinb, design = as.formula(opt$deseq_model))
     dds <- DESeq(dds, test="LRT", reduced=~1, minmu=1e-6)
 
     flog.info("Running SVA and RUVs...")
@@ -164,7 +162,6 @@ run <- function(opt) {
     p2 <- ggplot(as_tibble(colData(dds)), aes(SV2, total_features)) + geom_point() + ggtitle("SVA Variable 2")
     p3 <- ggplot(as_tibble(colData(dds)), aes(W_1, total_features)) + geom_point() + ggtitle("RUV Variable 1")
     p4 <- ggplot(as_tibble(colData(dds)), aes(W_2, total_features)) + geom_point() + ggtitle("RUV Variable 2")
-    gridExtra::grid.arrange(p1,p2,p3,p4)
     png('Surrogatevariables_vs_bias.png', width = 6, height = 6, units = 'in', res = 300)
     gridExtra::grid.arrange(p1,p2,p3,p4)
     dev.off()
@@ -172,7 +169,7 @@ run <- function(opt) {
 
     flog.info("Running DESeq2...")
     ## Run with RUVSeq batch model
-    design(dds) <- opt$deseq_model
+    design(dds) <- as.formula(opt$deseq_model)
     dds <- DESeq(dds, test="Wald", betaPrior = TRUE)
     res <- results(dds,independentFiltering = FALSE)
     flog.info(print(summary(res)))
@@ -188,13 +185,13 @@ run <- function(opt) {
     flog.info("... plotting MA")
     ## MA Plot
     start_plot("MAPlot")
-    plotMA(dds, ylim = c(-3,3))
+    DESeq2::plotMA(dds, ylim = c(-3,3))
     end_plot()
 
     flog.info("... saving DE data")
     ## Save DE data
     resSig <- subset(res, padj < 0.1)
-    data <- getmart(rownames(resSig))
+    data <- getmart_ensembl(rownames(resSig))
     resSig$symbol<-data$mgi_symbol[match(rownames(resSig), data$ensembl_gene_id)]
     resSig$desc<-data$description[match(rownames(resSig), data$ensembl_gene_id)]
     write.table(resSig, "results.tsv", sep = "\t")
@@ -254,37 +251,37 @@ run <- function(opt) {
     flog.info("... plotting downregulated genes")    
     ## Plot Top Downregulated Genes
     genelist <- rownames(res[ order( res$log2FoldChange ), ][0:9,])
-    dftemp <- makeTPMtable(genelist, logcounts(sce))
+    dftemp <- makeTPMtable(genelist, logcounts(sce), colData(sce))
     start_plot("Downregulated")
-      plotTPMs(dftemp)
+      print(plotTPMs(dftemp))
     end_plot()
 
     flog.info("... plotting downregulated genes")
     genelist <- rownames(res[ order( -res$log2FoldChange ), ][0:9,])
-    dftemp <- makeTPMtable(genelist, logcounts(sce))
+    dftemp <- makeTPMtable(genelist, logcounts(sce), colData(sce))
     start_plot("Upregulated")
-      plotTPMs(dftemp)
+      print(plotTPMs(dftemp))
     dev.off()
 
     flog.info("... plotting significant genes")
     genelist <- rownames(res[ order( -resSig$padj), ])
     if(length(genelist) > 9){
         genelist <- genelist[0:9]}
-    dftemp <- makeTPMtable(genelist, logcounts(sce))
+    dftemp <- makeTPMtable(genelist, logcounts(sce), colData(sce))
     start_plot("significant")
-      plotTPMs(dftemp)
+      print(plotTPMs(dftemp))
     dev.off()
 
     ## Plot RRBP1 and its binding partner NDUFA7
     genelist <- c("ENSMUSG00000027422","ENSMUSG00000041881")
-    dftemp <- makeTPMtable(genelist, logcounts(sce))
+    dftemp <- makeTPMtable(genelist, logcounts(sce), colData(sce))
     png('RRbp1 Genes.png', width = 10, height = 6, units = 'in', res = 300)
-      plotTPMs(dftemp)
+      print(plotTPMs(dftemp))
     dev.off()
 
 
     resrnk<-res
-    data <- getmarte(rownames(resrnk))
+    data <- getmart_ensembl2(rownames(resrnk))
     resrnk$symbol <- data$mgi_symbol[match(rownames(resrnk), data$ensembl_gene_id)]
     resrnk$desc <-data$description[match(rownames(resrnk), data$ensembl_gene_id)]
     resrnk$entrezgene <-data$entrezgene[match(rownames(resrnk), data$ensembl_gene_id)]
@@ -341,7 +338,7 @@ main <- function() {
             "--deseq-model",
             dest = "deseq_model",
             type = "character",
-            default = "~group",
+            default = "~ group",
             help = paste("model for DESeq2")
         ),
         make_option(

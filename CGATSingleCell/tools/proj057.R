@@ -181,7 +181,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
         fit <- trendVar(sce, parametric=TRUE)
         decomp <- decomposeVar(sce, fit)
         top.hvgs <- order(decomp$bio, decreasing=TRUE)
-        start_plot("ercc_fit")
+        start_plot(paste0(subdir,"ercc_fit"))
         plot(decomp$mean, decomp$total, xlab="Mean log-expression", ylab="Variance")
         o <- order(decomp$mean)
         lines(decomp$mean[o], decomp$tech[o], col="red", lwd=2)
@@ -199,7 +199,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     alt.fit <- trendVar(sce, use.spikes=FALSE) 
     alt.decomp <- decomposeVar(sce, alt.fit)
     alt.top.hvgs <- order(alt.decomp$bio, decreasing=TRUE)
-    start_plot("scran_fit")
+    start_plot(paste0(subdir,"scran_fit"))
     plot(alt.decomp$mean, alt.decomp$total, xlab="Mean log-expression", ylab="Variance")
     alt.o <- order(alt.decomp$mean)
     lines(alt.decomp$mean[alt.o], alt.decomp$tech[alt.o], col="red", lwd=2)
@@ -259,33 +259,36 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
     start_plot(paste0(plot.name,"_pca"))
     print(plot_pca)
     end_plot()
+    write_tsv(plot_pca$data, paste0(plot.name,"_pca2.tsv")) 
+    if(length(plot_pca$data$colour_by) != 0){
     start_plot(paste0(plot.name,"_pca2"))
-    print(ggplot(plot_pca$data, aes(X, Y, colour = colour_by)) + geom_point() + theme_classic() +
-          scale_color_manual(labels = levels(sce$group), values=col_scale) + 
-          labs(colour = "Genotype") + ylab("Principal Component 2") + 
-          xlab("Principal Component 1"))
-    end_plot()
+        print(ggplot(plot_pca$data, aes(X, Y, colour = colour_by)) + geom_point() + theme_classic() +
+              scale_color_manual(labels = levels(sce$group), values=col_scale) + 
+              labs(colour = "Genotype") + ylab("Principal Component 2") + 
+              xlab("Principal Component 1"))
+    end_plot()}
 
     # tSNE
     set.seed(12345678)
-    if(assay == "counts") joint_tsne <- Rtsne(t(counts(sce)), perplexity = 15)
-    else joint_tsne <- Rtsne(t(logcounts(sce)), perplexity = 15)
+    if(assay == "counts") joint_tsne <- Rtsne(t(counts(sce[endog_genes, ])), perplexity = 15)
+    else joint_tsne <- Rtsne(t(logcounts(sce[endog_genes, ])), perplexity = 15)
     cell_type_labels <- factor(c(as.character(colData(sce)$group), as.character(colData(sce)$group)))
     tsnedf <- as.data.frame(joint_tsne$Y)
     tsnedf$group <- sce$group
+    write_tsv(tsnedf, paste0(plot.name,"_tsne.tsv"))
     start_plot(paste0(plot.name,"_tsne"))
-    print(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + theme_bw() +
+    print(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + theme_classic() +
           scale_color_manual(labels = levels(sce$group), values=col_scale) +
           labs(colour = "Genotype") + ylab("tSNE Dimension 2") + xlab("tSNE Dimension 1"))
     end_plot()
 
     if(packageVersion("scater") <= "1.8.4"){
-        plotEx <- plotExplanatoryVariables(sce,
+        plotEx <- plotExplanatoryVariables(sce[endog_genes, ],
         variable = c("total_features", "total_counts"),
         exprs_values = assay)}
     else{                
         plotEx <- plotExplanatoryPCs(
-        sce,
+        sce[endog_genes, ],
         variable = c("total_features", "total_counts"),
         exprs_values = assay,
         npcs_to_plot = 20)
@@ -295,15 +298,13 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
     end_plot()
 
     #create melted tables for Counts data
-    if(!length(grep("ER", rownames(sce)))){
+    if(length(grep("ER", rownames(sce))) == 0){
         # skip correlation with ERCCs if no ERCCs
-        return()
-    }
+        return()}
 
     if(assay == "counts"){
-        ERCC <- as_tibble(counts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")
-    }
-    else {
+        ERCC <- as_tibble(counts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")}
+    else{
         ERCC <- as_tibble(logcounts(sce[rownames(sce)[grep("ER", rownames(sce))],]),rownames = "ID")
     }
     ERCCplot <- inner_join(ERCC, ERCCconc[,1:2], by = "ID")
@@ -317,7 +318,7 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
           geom_smooth(method = lm) + 
           ggtitle(label = plot.name, paste0("R^2=",as.character(fit[9]))) + 
           ylab(plot.name) + theme_classic()
-    start_plot(paste0("ERCC_vs_", plot.name, "_alldata"))
+    start_plot(paste0(plot.name,"ERCC_vs_alldata"))
     print(p0)
     end_plot()
 
@@ -325,7 +326,7 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
     fit1 <- summary(lm(log(dfplot_big$Mix1)~dfplot_big$value))
     p1 <- ggplot(dfplot_big,aes(log(Mix1),value)) +  geom_point() + geom_smooth(method = lm) + 
           ggtitle(label = paste0(plot.name, " - high counts only"), paste0("R^2=",as.character(fit1[9]))) + ylab(plot.name) + theme_classic()
-    start_plot(paste0("ERCC_vs_", plot.name, "_highonly"))
+    start_plot(paste0(plot.name,"ERCC_vs_highonly"))
     print(p1)
     end_plot()
 }
@@ -349,8 +350,6 @@ mergeSceRaw <- function(list_sces) {
     rownames(combined_designs) <- combined_designs$sample_id
     rownames(combined_counts) <- combined_counts$Row.names
     combined_counts <- combined_counts[,rownames(combined_designs)]
-    write.table(combined_designs, "combined_designs.tsv", quote = FALSE, sep = "\t", row.names = TRUE)
-    write.table(combined_counts, "combined_counts.tsv", quote = FALSE, sep = "\t", row.names = TRUE)
     sce_merged  <- SingleCellExperiment(
         assays = list(counts = as.array.Array(combined_counts)), 
         colData = combined_designs
@@ -403,10 +402,10 @@ mergeSeurat <- function(sce_reduced){
     summary(factor(merged.discard@meta.data$celltype)) # check the cell-type of the discarded cells.
 
     merged_seurat <- AlignSubspace(object = merged_seurat, reduction.type = "cca", grouping.var = "dataset", dims.align = 1:5)
-    DimPlot(object = merged_seurat, reduction.use = "cca.aligned", group.by = "group", pt.size = 1, cols.use =c(" azure4", "black", "lightgrey","red", "green")) # After aligning subspaces
+    DimPlot(object = merged_seurat, reduction.use = "cca.aligned", group.by = "group", pt.size = 1, cols.use =c(opt$exp_colours, opt$allen_colours)) # After aligning subspaces
 
     png('TSNE_seurat_merged.png', width = 6, height = 6, units = 'in', res = 300)
-    DimPlot(object = merged_seurat, reduction.use = "cca.aligned", group.by = "group", pt.size = 1, cols.use = c(" azure4", "black", "lightgrey","red", "green")) # After aligning subspaces
+    DimPlot(object = merged_seurat, reduction.use = "cca.aligned", group.by = "group", pt.size = 1, cols.use = c(opt$exp_colours, opt$allen_colours)) # After aligning subspaces
 
 }
 
@@ -439,7 +438,10 @@ run <- function(opt) {
     flog.info("Performing normalisations ...")
     sce <-  normalise_and_plot(sce.raw, endog_genes, ERCCconc, 
             method=opt$normalisation, subdir="normalisation_experiment",
-            col_scale=c("red","green"))
+            col_scale=opt$exp_colours)
+    file = get_output_filename("sce_normalised.rds")
+    flog.info(paste("Saving normalised single cell data to", file))
+    saveRDS(sce, file = file)
 
     flog.info("Plotting SC3")
     rowData(sce)$feature_symbol = rownames(sce)
@@ -482,7 +484,10 @@ run <- function(opt) {
     flog.info("Normalising Allen Data ...")
     sce_allen <-  normalise_and_plot(sce_allen, endog_genes, ERCCconc, 
             method=opt$normalisation, subdir="normalisation_allen",
-            col_scale=c("azure4", "black", "lightgrey"))
+            col_scale=c(opt$allen_colours))
+    file = get_output_filename("sce_allen.rds")
+    flog.info(paste("Saving normalised allen single cell data to", file))
+    saveRDS(sce_allen, file = file)
 
     flog.info("Merging datasets ...")
     sce_merged <- mergeSceRaw(list(sce, sce_allen))
@@ -491,41 +496,45 @@ run <- function(opt) {
     endog_genes <- !rowData(sce_merged)$is_feature_control
     sce_merged <-  normalise_and_plot(sce_merged, endog_genes, ERCCconc, 
             method=opt$normalisation, subdir="normalisation_joint",
-            col_scale=c("red", "green"," azure4", "black", "lightgrey"))
+            col_scale=c(opt$exp_colours, opt$allen_colours))
+    file = get_output_filename("sce_merged.rds")
+    flog.info(paste("Saving merged single cell data to", file))
+    saveRDS(sce_merged, file = file)
 
     flog.info("Merging datasets using mnnCorrect ...")    
-    options(browserNLdisabled = TRUE)
-    browser()
-    sce_list <- list(sce, sce_allen)
+    sce_list <- list(sce_allen, sce)
     sce_list <- sce_common(sce_list)
-    mnn_matrix <- do.call(cbind, lapply(sce_list,logcounts))
+    sce_list <- lapply(sce_list, function(sce_arg) sce_arg[order(rownames(sce_arg)),])
+    logmat_list <- lapply(sce_list, logcounts)
+    mnn_matrix <- do.call(cbind, logmat_list)
     cell_type_labels <- unlist(lapply(sce_list, function(...) as.character(colData(...)$group)))
     dataset_labels <- rep(1:length(sce_list), times=lengths(lapply(sce_list,colnames)))
     pheno <- data.frame(Sample_ID = colnames(mnn_matrix),
                     Study_ID=dataset_labels,
                     Celltype=paste(cell_type_labels, dataset_labels, sep="-"))
     var.genes = get_variable_genes(mnn_matrix, pheno)
-    corrected <- do.call(mnnCorrect, c(lapply(sce_list, logcounts),
-                                       subset.row=var.genes, k=50, sigma=1,
-                                       pc.approx=TRUE, svd.dim=3 ))
-
-    joint_expression_matrix <- cbind(corrected$corrected[[1]], corrected$corrected[[2]])
-
-    set.seed(345873945)
-    joint_tsne <- Rtsne(t(joint_expression_matrix), perplexity = 50)
-
-    cell_type_labels <- factor(c(as.character(colData(sce)$group),
-                                 as.character(colData(sce_allen)$group)))
-    tsnedf <- as.data.frame(joint_tsne$Y)
-    tsnedf$group <- cell_type_labels
-
-      png('TSNE_mmn_merged.png', width = 6, height = 4, units = 'in', res = 300)
-    ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
-      scale_color_manual(values=c("azure4", "black", "lightgrey", "red", "green")) +
-      ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1")
-    dev.off()
-    options(browserNLdisabled = TRUE)
-    browser()
+    dir.create("mnnCorrect")    
+    for(i in 1:100){
+        seed_a <- sample(1:100000,1)
+        seed_b <- sample(1:100000,1)
+        set.seed(seed_a)
+        corrected <- do.call(mnnCorrect, c(logmat_list, list(k=50, sigma=1,
+                                           pc.approx=TRUE, svd.dim=3)))
+        joint_expression_matrix <- do.call(cbind,corrected$corrected)
+        set.seed(seed_b)
+        joint_tsne <- Rtsne(t(joint_expression_matrix), perplexity = 50)
+        cell_type_labels <- factor(unlist(lapply(sce_list, function(...) as.character(colData(...)$group))))
+        tsnedf <- as.data.frame(joint_tsne$Y)
+        tsnedf$group <- cell_type_labels
+        write_tsv(tsnedf, paste0('mnnCorrect/tSNE_merged_',seed_a,'_',seed_b,'.tsv'))
+        png(paste0('mnnCorrect/tSNE_merged_',seed_a,'_',seed_b,'.png'),
+            width = 6, height = 4, units = 'in', res = 300)
+        ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
+          scale_color_manual(values=c(opt$allen_colours, opt$exp_colours)) +
+          ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1") +
+          theme_classic()
+        dev.off()
+        }
 }
 
 main <- function() {
@@ -579,6 +588,20 @@ main <- function() {
             type = "character",
             default = "",
             help = paste("Path to Allen Atlas row data file")
+        ),
+        make_option(
+            "--colours",
+            dest = "exp_colours",
+            type = "character",
+            default = "",
+            help = paste("Colours to use for plotting")
+        ),
+        make_option(
+            "--allen-colours",
+            dest = "allen_colours",
+            type = "character",
+            default = "",
+            help = paste("Colours to use for plotting allan")
         )
     )
     opt <- experiment_start(option_list = option_list,
@@ -586,6 +609,12 @@ main <- function() {
 
     if (!is.null(opt$factors)) {
         opt$factors = unlist(strsplit(opt$factors, ","))
+    }
+    if (!is.null(opt$exp_colours)) {
+        opt$exp_colours = unlist(strsplit(opt$exp_colours, ","))
+    }
+    if (!is.null(opt$allen_colours)) {
+        opt$allen_colours = unlist(strsplit(opt$allen_colours, ","))
     }
     run(opt)
     

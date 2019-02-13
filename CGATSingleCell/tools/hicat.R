@@ -105,7 +105,7 @@ run <- function(opt) {
                                     markers      = marker_genes2,
                                     markers.perc = 0.8,
                                     iter         = 100)
-    write_tsv(mapping_results, "full_result.tsv")
+    write_tsv(as_tibble(mapping_results$map.df,rownames = "rowname"), "full_result.tsv")
 
     map.df <- as_tibble(mapping_results$map.df,rownames = "rowname") %>%
       plyr::mutate(pred.cl = as.numeric(as.character(pred.cl))) %>%

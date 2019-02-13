@@ -529,10 +529,10 @@ run <- function(opt) {
         write_tsv(tsnedf, paste0('mnnCorrect/tSNE_merged_',seed_a,'_',seed_b,'.tsv'))
         png(paste0('mnnCorrect/tSNE_merged_',seed_a,'_',seed_b,'.png'),
             width = 6, height = 4, units = 'in', res = 300)
-        ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
-          scale_color_manual(values=c(opt$allen_colours, opt$exp_colours)) +
-          ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1") +
-          theme_classic()
+            printt(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
+              scale_color_manual(values=c(opt$allen_colours, opt$exp_colours)) +
+              ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1") +
+              theme_classic())
         dev.off()
         }
 }

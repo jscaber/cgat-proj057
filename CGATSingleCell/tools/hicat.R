@@ -89,7 +89,8 @@ run <- function(opt) {
     marker_genes <- marker_results$markers
 
     flog.info("Reading in experiment")
-    sce <- readRDS(opt$rds_filename)
+    sce.raw <- readRDS(opt$rds_filename)
+    sce <- sce.raw
     cpm(sce) <- calculateCPM(sce)
     data <- getmart(rownames(sce))
     data.unique <- data[match(unique(data$ensembl_gene_id), data$ensembl_gene_id),]
@@ -105,21 +106,26 @@ run <- function(opt) {
                                     markers      = marker_genes2,
                                     markers.perc = 0.8,
                                     iter         = 100)
-    write_tsv(as_tibble(mapping_results$map.df,rownames = "rowname"), "full_result.tsv")
+    
+    colnames(mapping_results$map.freq) <- ref.cl.df[colnames(mapping_results$map.freq),]$cluster
+    write.table(as.data.frame.matrix(mapping_results$map.freq), 
+                "full_result.tsv", col.names = NA, sep="\t", quote=FALSE)
 
     map.df <- as_tibble(mapping_results$map.df,rownames = "rowname") %>%
       plyr::mutate(pred.cl = as.numeric(as.character(pred.cl))) %>%
       left_join(ref.cl.df, by = c("pred.cl" = "cluster_id"))
     write_tsv(map.df, "mapping_result.tsv")
-    browser()
-    summary_result <- as_tibble(do.call(rbind, lapply(as.list(levels(factor(sce$group))),function(level){table(map.df[grep(level,map.df$rowname),]$cluster)})))
-    write_tsv("summary_result.tsv")
+    summary_result <- do.call(bind_rows, lapply(as.list(levels(factor(sce$group))),function(level){table(map.df[grep(level,map.df$rowname),]$cluster)}))
+    summary_result <- add_column(summary_result,celltype=levels(factor(sce$group)))
+    summary_result[is.na(summary_result)] <- 0
+    write_tsv(summary_result,"summary_result.tsv")
 
-    if(length(opt$out_filter) != 0){
+    if(length(opt$out_filter
+) != 0){
         keep <- map.df[grep(opt$out_filter,map.df$cluster),]$rowname
         file = get_output_filename("sce_filtered_hicat.rds")
         flog.info(paste("Saving data matching filter pattern to file", file))
-        saveRDS(sce[,keep], file = file)
+        saveRDS(sce.raw[,keep], file = file)
         }
 }
 

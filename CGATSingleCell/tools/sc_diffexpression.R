@@ -127,13 +127,13 @@ run <- function(opt) {
     flog.info("Running zinbwave...")
     flog.info(paste0("Model: ", opt$zinb_model))
     zinb$condition <- factor(zinb$group)
-    # we need to reorganize the assays in the SumExp from splatter
-    nms <- c("counts", setdiff(assayNames(zinb), "counts"))
-    assays(zinb) <- assays(zinb)[nms]
     # epsilon setting as recommended by the ZINB-WaVE integration paper
-    zinb <- zinbwave(zinb, K=1, X=opt$zinb_model, BPPARAM=SerialParam(), epsilon=1e12)
-    dds <- DESeqDataSet(zinb, design = as.formula(opt$deseq_model))
-    dds <- DESeq(dds, test="LRT", reduced=~1, minmu=1e-6)
+    if(opt$zinb_model != ""){
+        zinb <- zinbwave(zinb, K=1, X=opt$zinb_model, BPPARAM=SerialParam(), epsilon=1e12)}
+    else{
+        zinb <- zinbwave(zinb, K=0, BPPARAM=SerialParam(), epsilon=1e12)}
+    dds <- DESeqDataSet(zinb, design = ~group)
+    dds <- DESeq(dds, test="LRT", reduced=~1, sfType="poscounts", useT=TRUE, minmu=1e-6)
 
     flog.info("Running SVA and RUVs...")
     # SVA Pacakge script
@@ -170,7 +170,7 @@ run <- function(opt) {
     flog.info("Running DESeq2...")
     ## Run with RUVSeq batch model
     design(dds) <- as.formula(opt$deseq_model)
-    dds <- DESeq(dds, test="Wald", betaPrior = TRUE)
+    dds <- DESeq(dds, test="LRT", reduced=~W_1, sfType="poscounts", useT=TRUE, minmu=1e-6)
     res <- results(dds,independentFiltering = FALSE)
     flog.info(print(summary(res)))
 
@@ -231,7 +231,7 @@ run <- function(opt) {
             breaks=seq(0, 20, by = 1),fill=I("grey"), col=I("black"),
             main = "Histogram of DE experiments\n with random group labels", 
             xlab = "Number of differentially expressed genes",
-            ylam = "Number of simulations") +
+            ylab = "Number of simulations") +
             geom_vline(xintercept = length(rownames(subset(res, padj < 0.1)))) +
             theme_classic() + theme(plot.title = element_text(hjust = 0.5, size=22))
         print(sims)
@@ -264,7 +264,8 @@ run <- function(opt) {
     dev.off()
 
     flog.info("... plotting significant genes")
-    genelist <- rownames(res[ order( -resSig$padj), ])
+    resSig <- subset(res, padj < 0.1)
+    genelist <- rownames(resSig[order(resSig$padj), ])
     if(length(genelist) > 9){
         genelist <- genelist[0:9]}
     dftemp <- makeTPMtable(genelist, logcounts(sce), colData(sce))

@@ -142,7 +142,7 @@ getmart_symbol <- function(values){
 # Function: Normalises Single Cell dataset using multiple methods and plots the result
 # Inputs: single cell dataset, list of endogenous genes (not spike ins, and not mitochondrial	)
 # Outputs: png files showing effect of normalisation on PCA
-normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", subdir=NULL, col_scale=NULL) {
+normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", subdir=NULL, col_scale=NULL, perplexity=15) {
 
     if(length(subdir)){
         dir.create(subdir)
@@ -150,34 +150,35 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     }
     flog.info("... Raw Counts - no normalisation")
     sce <- sce.raw
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"rawcounts"), assay="counts", col_scale=col_scale)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"rawcounts"), assay="counts", col_scale=col_scale, perplexity=perplexity)
     
     flog.info("... Log count normalisation")
     logcounts(sce) = log(counts(sce)+1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"logcounts"),col_scale=col_scale)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"logcounts"),col_scale=col_scale, perplexity=perplexity)
     if(method == "log"){
         sce_out <- sce}
 
     flog.info("... CPM normalisation")
     logcounts(sce) <- log2(calculateCPM(sce) + 1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"cpm"),col_scale=col_scale)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"cpm"),col_scale=col_scale, perplexity=perplexity)
     if(method == "cpm"){
         sce_out <- sce}
 
     flog.info("... Downsampling normalisation")
     logcounts(sce) <- log2(down_sample_matrix(counts(sce)) + 1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"downsampling"),col_scale=col_scale)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"downsampling"),col_scale=col_scale, perplexity=perplexity)
     if(method == "downsampling"){
         sce_out <- sce}
 
-    if(!length(grep("ER", rownames(sce)))){
+    if(length(grep("ER", rownames(sce))) != 0){
         flog.info("... skipping SCRAN normalisation with ERCCs - no ERCCs found")}
     else{
         flog.info("... SCRAN normalisation with ERCCs")
         sce <- sce.raw
         sce <- computeSpikeFactors(sce, general.use=TRUE)
         sce <- normalize(sce)
-        check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ercc"),col_scale=col_scale)
+        check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ercc"),col_scale=col_scale, perplexity=perplexity)
+        browser()
         fit <- trendVar(sce, parametric=TRUE)
         decomp <- decomposeVar(sce, fit)
         top.hvgs <- order(decomp$bio, decreasing=TRUE)
@@ -195,7 +196,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     sce <- sce.raw
     sce <- computeSumFactors(sce)
     sce <- normalize(sce)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"scran"),col_scale=col_scale)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"scran"),col_scale=col_scale, perplexity=perplexity)
     alt.fit <- trendVar(sce, use.spikes=FALSE) 
     alt.decomp <- decomposeVar(sce, alt.fit)
     alt.top.hvgs <- order(alt.decomp$bio, decreasing=TRUE)
@@ -226,7 +227,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
     assay(sce, "logcounts") <- log2(
         t(t(ruvs$normalizedCounts) / 
             colSums(ruvs$normalizedCounts) * 1e6) + 1)
-    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ruvs"),col_scale=col_scale)
+    check_normalisation(sce, endog_genes, ERCCconc, paste0(subdir,"ruvs"),col_scale=col_scale, perplexity=perplexity)
     if(method == "ruvs"){
         sce_out <- sce}
 
@@ -238,7 +239,7 @@ normalise_and_plot <- function(sce.raw, endog_genes, ERCCconc, method="cpm", sub
 # Inputs: single cell dataset, list of endogenous genes (not spike ins, and not mitochondrial	)
 # Outputs: png files showing effect of normalisation on PCA
 check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_name_provided",
-                                colours=NULL, assay="logcounts", col_scale=NULL) {
+                                colours=NULL, assay="logcounts", col_scale=NULL, perplexity = 15) {
 
     #Sizefactorcorrelation
     if(length(sizeFactors(sce)) != 0){
@@ -270,8 +271,8 @@ check_normalisation <- function(sce, endog_genes, ERCCconc, plot.name="no_plot_n
 
     # tSNE
     set.seed(12345678)
-    if(assay == "counts") joint_tsne <- Rtsne(t(counts(sce[endog_genes, ])), perplexity = 15)
-    else joint_tsne <- Rtsne(t(logcounts(sce[endog_genes, ])), perplexity = 15)
+    if(assay == "counts") joint_tsne <- Rtsne(t(counts(sce[endog_genes, ])), perplexity = perplexity)
+    else joint_tsne <- Rtsne(t(logcounts(sce[endog_genes, ])), perplexity = perplexity)
     cell_type_labels <- factor(c(as.character(colData(sce)$group), as.character(colData(sce)$group)))
     tsnedf <- as.data.frame(joint_tsne$Y)
     tsnedf$group <- sce$group
@@ -438,7 +439,7 @@ run <- function(opt) {
     flog.info("Performing normalisations ...")
     sce <-  normalise_and_plot(sce.raw, endog_genes, ERCCconc, 
             method=opt$normalisation, subdir="normalisation_experiment",
-            col_scale=opt$exp_colours)
+            col_scale=opt$exp_colours, perplexity=opt$perplexity)
     file = get_output_filename("sce_normalised.rds")
     flog.info(paste("Saving normalised single cell data to", file))
     saveRDS(sce, file = file)
@@ -484,7 +485,7 @@ run <- function(opt) {
     flog.info("Normalising Allen Data ...")
     sce_allen <-  normalise_and_plot(sce_allen, endog_genes, ERCCconc, 
             method=opt$normalisation, subdir="normalisation_allen",
-            col_scale=c(opt$allen_colours))
+            col_scale=c(opt$allen_colours), perplexity=50)
     file = get_output_filename("sce_allen.rds")
     flog.info(paste("Saving normalised allen single cell data to", file))
     saveRDS(sce_allen, file = file)
@@ -496,7 +497,7 @@ run <- function(opt) {
     endog_genes <- !rowData(sce_merged)$is_feature_control
     sce_merged <-  normalise_and_plot(sce_merged, endog_genes, ERCCconc, 
             method=opt$normalisation, subdir="normalisation_joint",
-            col_scale=c(opt$exp_colours, opt$allen_colours))
+            col_scale=c(opt$exp_colours, opt$allen_colours), perplexity=50)
     file = get_output_filename("sce_merged.rds")
     flog.info(paste("Saving merged single cell data to", file))
     saveRDS(sce_merged, file = file)
@@ -529,7 +530,7 @@ run <- function(opt) {
         write_tsv(tsnedf, paste0('mnnCorrect/tSNE_merged_',seed_a,'_',seed_b,'.tsv'))
         png(paste0('mnnCorrect/tSNE_merged_',seed_a,'_',seed_b,'.png'),
             width = 6, height = 4, units = 'in', res = 300)
-            printt(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
+            print(ggplot(tsnedf, aes(V1, V2, colour = group)) + geom_point() + 
               scale_color_manual(values=c(opt$allen_colours, opt$exp_colours)) +
               ylab("Joint tSNE Dimension 2") + xlab("Joint tSNE Dimension 1") +
               theme_classic())
@@ -595,6 +596,13 @@ main <- function() {
             type = "character",
             default = "",
             help = paste("Colours to use for plotting")
+        ),
+        make_option(
+            "--perplexity",
+            dest = "perplexity",
+            type = "integer",
+            default = 15,
+            help = paste("Perplexity for experimental dataset only (for Allen dataset perplexity of 50 is used)")
         ),
         make_option(
             "--allen-colours",

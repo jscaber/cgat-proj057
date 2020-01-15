@@ -1,63 +1,28 @@
 .. image:: https://travis-ci.org/cgat-developers/cgat-apps.svg?branch=master
     :target: https://travis-ci.org/cgat-developers/cgat-apps
 
-=========
-CGAT Apps
-=========
+===========
+Project 057
+===========
 
-CGAT Apps is a collection of scripts to analyse high-throughput sequencing data.
+This repository contains R scripts to accompany:
+Ellender TJ, Avery SV, Mahfooz K, et al. Embryonic progenitor pools generate diversity in fine-scale excitatory cortical subnetworks. Nat Commun. 2019;10(1):5224. Published 2019 Nov 19. doi:10.1038/s41467-019-13206-1
 
-After installation, use the ``cgat`` command to see how to use them.
-
-More details coming soon, so stay tuned!
-
-For questions, please open a discussion on the GitHub 
-`issue page <https://github.com/cgat-developers/cgat-apps/issues>`_.
 
 Installation
 ============
 
-Install using Conda
--------------------
-
-The preferred method to install CGAT Apps is using the installation script, which uses
-`Conda <https://conda.io>`_.
-
-Here are the steps::
-
-        # download installation script:
-        curl -O https://raw.githubusercontent.com/cgat-developers/cgat-apps/master/install-CGAT-tools.sh
-
-        # see help:
-        bash install-CGAT-tools.sh
-
-        # install the development version (recommended, no production version yet):
-        bash install-CGAT-tools.sh --devel [--location </full/path/to/folder/without/trailing/slash>]
-
-        # the code is downloaded in zip format by default. If you want to get a git clone, use:
-        --git # for an HTTPS clone
-        --git-ssh # for a SSH clone (you need to be a cgat-developer contributor on GitHub to do this)
-
-        # enable the conda environment as requested by the installation script
-        # NB: you probably want to automate this by adding the instructions below to your .bashrc
-        source </full/path/to/folder/without/trailing/slash>/conda-install/etc/profile.d/conda.sh
-        conda activate base
-        conda activate cgat-a
-
-        # finally, please run the cgatflow command-line tool to check the installation:
-        cgat --help
-
-The installation script will put everything under the specified location. The aim is to provide a portable
-installation that does not interfere with the existing software. As a result, you will get a conda environment
-working with CGAT Apps which can be enabled on demand according to your needs.
+1. Install https://github.com/cgat-developers/cgat-core and https://github.com/cgat-developers/cgat-apps
+2. Download the project057 github repository
+3. Run ```setup.py develop``` in the project057 directory
 
 Usage
 =====
 
+The scripts require a counts table, generated e.g. by featurecounts as input.
+
 Run the ``cgat --help`` command to see what scripts are available and how to use them.
-For example, to strip sequence and quality information from a bam_ file, type::
+For example, to run multiple normalisations on data obtained from featurecounts
 
-   cgat bam2bam --strip=sequence < in.bam > out.bam
+   cgat-singlecell normalisation --counts-filename=featurecounts.tsv --phenotypes-filename=phenodata.tsv --factor=group,mouse_id,collection_date,slice_depth,slice_number,pipette_visual,timepoint > filtered_counts.tsv
 
-.. _cgat-core: https://github.com/cgat-developers/cgat-core
-.. _bam: http://en.wikipedia.org/wiki/SAMtools
